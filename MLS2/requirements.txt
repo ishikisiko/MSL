@@ -1,0 +1,13 @@
+# Core Dependencies
+tensorflow>=2.13.0
+numpy>=1.23.0
+tensorflow-model-optimization>=0.7.5
+# Memory Profiling
+psutil>=5.9.0
+# Image Processing
+Pillow>=10.0.0
+# Hugging Face Model Hub
+huggingface-hub>=0.16.0
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+memory-profiler>=0.61.0 

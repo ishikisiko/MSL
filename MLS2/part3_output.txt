@@ -1,0 +1,158 @@
+Downloading model from Hugging Face Hub...
+Model downloaded to: /root/.cache/huggingface/hub/models--Ishiki327--Course/snapshots/42abed2eb7248df7f7d0b59fed688d166da2f55e/baseline_model.keras
+tf.keras loading failed: Error when deserializing class 'InputLayer' using config={'batch_shape': [None, 32, 32, 3], 'dtype': 'float32', 'sparse': False, 'ragged': False, 'name': 'input_layer_1'}.
+
+Exception encountered: Unrecognized keyword arguments: ['batch_shape']
+Loaded model using standalone Keras loader for compatibility.
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer MaxPooling2D: 'str' object has no attribute 'name'
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer MaxPooling2D: 'str' object has no attribute 'name'
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer Conv2D: 'str' object has no attribute 'name'
+Warning: Error creating layer BatchNormalization: 'str' object has no attribute 'name'
+Warning: Error creating layer ReLU: 'str' object has no attribute 'name'
+Warning: Error creating layer MaxPooling2D: 'str' object has no attribute 'name'
+Warning: Error creating layer GlobalAveragePooling2D: 'str' object has no attribute 'name'
+Warning: Error creating layer Dropout: 'str' object has no attribute 'name'
+Warning: Error creating layer Dense: 'str' object has no attribute 'name'
+Warning: Error creating layer Dropout: 'str' object has no attribute 'name'
+Warning: Error creating layer Dense: 'str' object has no attribute 'name'
+Standalone Keras conversion failed: Failed to convert standalone Keras model to TensorFlow Keras. Tried multiple methods. Errors:
+Method 1 (config): Error when deserializing class 'InputLayer' using config={'shape': (32, 32, 3), 'dtype': 'float32', 'sparse': False, 'ragged': False, 'name': 'input_layer_1'}.
+
+Exception encountered: Unrecognized keyword arguments: ['shape']
+Method 2 (manual): You called `set_weights(weights)` on layer "model" with a weight list of length 40, but the layer was expecting 0 weights. Provided weights: [array([[[[-5.31557500e-01, -1.15909010e-01,  2.48...
+Method 3 (sequential): 'str' object has no attribute 'name'
+Attempting to create a simple compatible model...
+Created fallback CNN model with shape (32, 32, 3) -> 10 classes
+Created fallback model for demonstration.
+
+--- Benchmarking Pruning ---
+Successfully created pruned model with 75.0% sparsity.
+
+--- Benchmarking Quantization ---
+/usr/local/lib/python3.12/dist-packages/tensorflow/lite/python/convert.py:854: UserWarning: Statistics for quantized inputs were expected, but not specified; continuing anyway.
+  warnings.warn(
+Quantization (dynamic_range): Size = 129.73 KB
+Quantization (full_integer): Size = 128.27 KB
+Quantization (float16): Size = 243.13 KB
+
+--- Benchmarking Architecture Optimization ---
+Successfully created architecture-optimized model.
+
+--- Benchmarking Neural Architecture Search ---
+Starting simplified Neural Architecture Search...
+Trial 1/5: Config={'filters': 64, 'kernel_size': 5, 'depth': 4}, Score=0.94
+Trial 2/5: Config={'filters': 64, 'kernel_size': 3, 'depth': 3}, Score=4.99
+Trial 3/5: Config={'filters': 16, 'kernel_size': 5, 'depth': 4}, Score=5.33
+Trial 4/5: Config={'filters': 16, 'kernel_size': 5, 'depth': 4}, Score=4.04
+Trial 5/5: Config={'filters': 16, 'kernel_size': 3, 'depth': 3}, Score=19.60
+Best architecture found: {'filters': 16, 'kernel_size': 3, 'depth': 3}
+
+--- Creating TFLite models ---
+Converted 'baseline' to TFLite: tflite_models/baseline.tflite (481.39 KB)
+Converted 'pruned' to TFLite: tflite_models/pruned.tflite (481.39 KB)
+Converted 'arch_opt' to TFLite: tflite_models/arch_opt.tflite (291.02 KB)
+
+--- Edge Optimization Benchmark Summary ---
+{
+  "pruning_0.75": "Model created, requires fine-tuning.",
+  "quantization": {
+    "dynamic_range": {
+      "size_kb": 129.734375
+    },
+    "full_integer": {
+      "size_kb": 128.265625
+    },
+    "float16": {
+      "size_kb": 243.12890625
+    }
+  },
+  "architecture_optimization": "Model created.",
+  "nas": {
+    "best_config": {
+      "filters": "16",
+      "kernel_size": "3",
+      "depth": "3"
+    },
+    "log": [
+      {
+        "config": {
+          "filters": "64",
+          "kernel_size": "5",
+          "depth": "4"
+        },
+        "accuracy": 0.6025714406155271,
+        "latency_ms": 0.64,
+        "score": 0.9415164048423785
+      },
+      {
+        "config": {
+          "filters": "64",
+          "kernel_size": "3",
+          "depth": "3"
+        },
+        "accuracy": 0.8621179071228062,
+        "latency_ms": 0.1728,
+        "score": 4.989079386825344
+      },
+      {
+        "config": {
+          "filters": "16",
+          "kernel_size": "5",
+          "depth": "4"
+        },
+        "accuracy": 0.8523476659736615,
+        "latency_ms": 0.16,
+        "score": 5.327139617712773
+      },
+      {
+        "config": {
+          "filters": "16",
+          "kernel_size": "5",
+          "depth": "4"
+        },
+        "accuracy": 0.6462256512112321,
+        "latency_ms": 0.16,
+        "score": 4.038885077038469
+      },
+      {
+        "config": {
+          "filters": "16",
+          "kernel_size": "3",
+          "depth": "3"
+        },
+        "accuracy": 0.8466611618735638,
+        "latency_ms": 0.0432,
+        "score": 19.59818434465785
+      }
+    ]
+  },
+  "tflite_conversion": {
+    "baseline": {
+      "path": "tflite_models/baseline.tflite",
+      "size_kb": 481.38671875
+    },
+    "pruned": {
+      "path": "tflite_models/pruned.tflite",
+      "size_kb": 481.38671875
+    },
+    "arch_opt": {
+      "path": "tflite_models/arch_opt.tflite",
+      "size_kb": 291.015625
+    }
+  }
+}

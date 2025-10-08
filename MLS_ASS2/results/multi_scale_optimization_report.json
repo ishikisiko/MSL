@@ -1,0 +1,83 @@
+{
+  "optimization_results": {
+    "cloud_server": {
+      "model_path": "models/cloud_server_optimized.keras",
+      "accuracy": 0.0,
+      "model_size_mb": 6.303426742553711,
+      "estimated_latency_ms": 5.0,
+      "memory_usage_mb": 256.0,
+      "optimization_strategy": "keras_fp32_saving"
+    },
+    "edge_device": {
+      "model_path": "models/edge_device_dynamic.tflite",
+      "accuracy": 0.0,
+      "model_size_mb": 0.3263092041015625,
+      "estimated_latency_ms": 20.0,
+      "memory_usage_mb": 64.0,
+      "optimization_strategy": "tflite_dynamic_range"
+    },
+    "microcontroller": {
+      "model_path": "models/microcontroller_int8.tflite",
+      "accuracy": 0.0,
+      "model_size_mb": 0.33306121826171875,
+      "estimated_latency_ms": 50.0,
+      "memory_usage_mb": 8.0,
+      "optimization_strategy": "tflite_full_int8"
+    }
+  },
+  "scaling_analysis": {
+    "targets": {
+      "cloud_server": {
+        "feasible": true,
+        "meets_size": true,
+        "meets_latency": true,
+        "meets_memory": true,
+        "strategy": "keras_fp32_saving",
+        "metrics": {
+          "model_size_mb": 6.303426742553711,
+          "estimated_latency_ms": 5.0,
+          "memory_usage_mb": 256.0,
+          "accuracy": 0.0
+        },
+        "model_path": "models/cloud_server_optimized.keras"
+      },
+      "edge_device": {
+        "feasible": true,
+        "meets_size": true,
+        "meets_latency": true,
+        "meets_memory": true,
+        "strategy": "tflite_dynamic_range",
+        "metrics": {
+          "model_size_mb": 0.3263092041015625,
+          "estimated_latency_ms": 20.0,
+          "memory_usage_mb": 64.0,
+          "accuracy": 0.0
+        },
+        "model_path": "models/edge_device_dynamic.tflite"
+      },
+      "microcontroller": {
+        "feasible": true,
+        "meets_size": true,
+        "meets_latency": true,
+        "meets_memory": true,
+        "strategy": "tflite_full_int8",
+        "metrics": {
+          "model_size_mb": 0.33306121826171875,
+          "estimated_latency_ms": 50.0,
+          "memory_usage_mb": 8.0,
+          "accuracy": 0.0
+        },
+        "model_path": "models/microcontroller_int8.tflite"
+      }
+    },
+    "best": {
+      "smallest_model": "edge_device",
+      "lowest_latency": "cloud_server"
+    }
+  },
+  "deployment_recommendations": [
+    "Feasible targets: cloud_server, edge_device, microcontroller.",
+    "Smallest feasible model: edge_device.",
+    "Lowest-latency feasible model: cloud_server."
+  ]
+}
