@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>机器学习测验平台</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- 首页界面 -->
+    <div id="home-page" class="page active">
+        <div class="container">
+            <header class="header">
+                <h1>🤖 机器学习测验平台</h1>
+                <p class="subtitle">选择一个测验开始答题</p>
+            </header>
+
+            <main class="main-content">
+                <div class="quiz-selection">
+                    <div class="quiz-card" onclick="startQuiz('quiz1')">
+                        <div class="quiz-header">
+                            <h2>测验 1</h2>
+                            <div class="quiz-icon">📚</div>
+                        </div>
+                        <div class="quiz-description">
+                            <p>涵盖自动微分、分布式训练、硬件优化等机器学习核心概念的综合测验。</p>
+                            <div class="quiz-stats">
+                                <span class="stat">40道题目</span>
+                                <span class="stat">单选题 + 多选题</span>
+                            </div>
+                        </div>
+                        <button class="start-btn">开始答题</button>
+                    </div>
+
+                    <div class="quiz-card" onclick="startQuiz('quiz2')">
+                        <div class="quiz-header">
+                            <h2>测验 2</h2>
+                            <div class="quiz-icon">🧠</div>
+                        </div>
+                        <div class="quiz-description">
+                            <p>聚焦于联邦学习、模型优化、嵌入式部署等高级机器学习主题的专业测验。</p>
+                            <div class="quiz-stats">
+                                <span class="stat">40道题目</span>
+                                <span class="stat">单选题 + 多选题</span>
+                            </div>
+                        </div>
+                        <button class="start-btn">开始答题</button>
+                    </div>
+                </div>
+            </main>
+
+            <footer class="footer">
+                <p>&copy; 2024 机器学习测验平台. 选择错误答案后将显示中文解答。</p>
+            </footer>
+        </div>
+    </div>
+
+    <!-- 答题界面 -->
+    <div id="quiz-page" class="page">
+        <div class="container">
+            <header class="quiz-header">
+                <div class="quiz-info">
+                    <h1 id="quiz-title">机器学习测验</h1>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill"></div>
+                        </div>
+                        <span class="progress-text" id="progress-text">第 1 题 / 40 题</span>
+                    </div>
+                </div>
+                <button class="home-btn" onclick="goHome()">🏠 首页</button>
+            </header>
+
+            <main class="quiz-main">
+                <div class="question-container">
+                    <div class="question-header">
+                        <span class="question-number" id="question-number">第 1 题</span>
+                        <span class="question-type" id="question-type">单选题</span>
+                    </div>
+
+                    <div class="question-content">
+                        <h2 class="question-text" id="question-text"></h2>
+
+                        <div class="options-container" id="options-container">
+                            <!-- 选项将动态生成 -->
+                        </div>
+                    </div>
+
+                    <div class="question-footer">
+                        <button class="nav-btn prev-btn" onclick="previousQuestion()" id="prev-btn">上一题</button>
+                        <button class="nav-btn next-btn" onclick="nextQuestion()" id="next-btn">下一题</button>
+                        <button class="submit-btn" onclick="submitAnswer()" id="submit-btn">提交答案</button>
+                    </div>
+                </div>
+
+                <!-- 答案解释区域 -->
+                <div class="explanation-container" id="explanation-container" style="display: none;">
+                    <div class="explanation-header">
+                        <h3>答案解释</h3>
+                        <button class="close-explanation" onclick="closeExplanation()">✕</button>
+                    </div>
+                    <div class="explanation-content">
+                        <div class="correct-answer">
+                            <strong>正确答案：</strong><span id="correct-answer-text"></span>
+                        </div>
+                        <div class="explanation-text">
+                            <strong>解释：</strong>
+                            <div id="explanation-text-content"></div>
+                        </div>
+                        <div class="chinese-explanation">
+                            <strong>中文解释：</strong>
+                            <div id="chinese-explanation-content"></div>
+                        </div>
+                    </div>
+                    <button class="continue-btn" onclick="continueToNext()">继续下一题</button>
+                </div>
+            </main>
+
+            <!-- 答题完成页面 -->
+            <div class="completion-container" id="completion-container" style="display: none;">
+                <div class="completion-card">
+                    <h2>🎉 答题完成！</h2>
+                    <div class="score-display">
+                        <p class="final-score" id="final-score"></p>
+                        <p class="score-breakdown" id="score-breakdown"></p>
+                    </div>
+                    <div class="completion-actions">
+                        <button class="action-btn review-btn" onclick="reviewAnswers()">查看错题</button>
+                        <button class="action-btn restart-btn" onclick="restartQuiz()">重新答题</button>
+                        <button class="action-btn home-btn" onclick="goHome()">返回首页</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="quiz.js"></script>
+</body>
+</html>

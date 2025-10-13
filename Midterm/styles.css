@@ -1,0 +1,523 @@
+/* 全局样式 */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+                 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+}
+
+/* 页面管理 */
+.page {
+    display: none;
+}
+
+.page.active {
+    display: block;
+}
+
+/* 首页样式 */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 50px;
+    color: white;
+}
+
+.header h1 {
+    font-size: 3rem;
+    margin-bottom: 10px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+}
+
+.subtitle {
+    font-size: 1.2rem;
+    opacity: 0.9;
+}
+
+.quiz-selection {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 30px;
+    margin-bottom: 50px;
+}
+
+.quiz-card {
+    background: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    cursor: pointer;
+}
+
+.quiz-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 40px rgba(0,0,0,0.2);
+}
+
+.quiz-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.quiz-header h2 {
+    color: #667eea;
+    font-size: 1.8rem;
+}
+
+.quiz-icon {
+    font-size: 2.5rem;
+}
+
+.quiz-description p {
+    color: #666;
+    margin-bottom: 15px;
+    font-size: 1rem;
+}
+
+.quiz-stats {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.stat {
+    background: #f8f9fa;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    color: #667eea;
+    font-weight: 500;
+}
+
+.start-btn {
+    width: 100%;
+    padding: 15px 30px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.3s ease;
+}
+
+.start-btn:hover {
+    opacity: 0.9;
+}
+
+.footer {
+    text-align: center;
+    color: white;
+    opacity: 0.8;
+    margin-top: 50px;
+}
+
+/* 答题页面样式 */
+.quiz-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: white;
+    padding: 20px 30px;
+    border-radius: 15px;
+    margin-bottom: 30px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+}
+
+.quiz-info h1 {
+    color: #667eea;
+    font-size: 1.5rem;
+    margin-bottom: 15px;
+}
+
+.progress-container {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.progress-bar {
+    width: 200px;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 500;
+}
+
+.home-btn {
+    padding: 10px 20px;
+    background: #f8f9fa;
+    border: none;
+    border-radius: 20px;
+    color: #667eea;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.home-btn:hover {
+    background: #e9ecef;
+}
+
+/* 题目容器 */
+.question-container {
+    background: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.question-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f8f9fa;
+}
+
+.question-number {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #667eea;
+}
+
+.question-type {
+    background: #e7f3ff;
+    color: #667eea;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.question-text {
+    font-size: 1.3rem;
+    color: #333;
+    margin-bottom: 30px;
+    line-height: 1.6;
+}
+
+/* 选项样式 */
+.options-container {
+    margin-bottom: 30px;
+}
+
+.option {
+    margin-bottom: 15px;
+    padding: 15px;
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    transition: all 0.3s ease;
+    cursor: pointer;
+}
+
+.option:hover {
+    border-color: #667eea;
+    background: #f8f9ff;
+}
+
+.option.correct {
+    border-color: #28a745;
+    background: #d4edda;
+}
+
+.option.incorrect {
+    border-color: #dc3545;
+    background: #f8d7da;
+}
+
+.option-label {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    cursor: pointer;
+    margin: 0;
+    font-weight: 500;
+}
+
+.option-letter {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    background: #667eea;
+    color: white;
+    border-radius: 50%;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.option.correct .option-letter {
+    background: #28a745;
+}
+
+.option.incorrect .option-letter {
+    background: #dc3545;
+}
+
+input[type="radio"],
+input[type="checkbox"] {
+    margin: 0;
+}
+
+/* 按钮样式 */
+.question-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+}
+
+.nav-btn,
+.submit-btn,
+.action-btn,
+.continue-btn {
+    padding: 12px 25px;
+    border: none;
+    border-radius: 25px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.nav-btn {
+    background: #f8f9fa;
+    color: #667eea;
+}
+
+.nav-btn:hover:not(:disabled) {
+    background: #e9ecef;
+}
+
+.nav-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.submit-btn {
+    background: #28a745;
+    color: white;
+}
+
+.submit-btn:hover:not(:disabled) {
+    background: #218838;
+}
+
+.submit-btn:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+}
+
+.action-btn {
+    background: #667eea;
+    color: white;
+    margin: 5px;
+}
+
+.action-btn:hover {
+    background: #5a6fd8;
+}
+
+.continue-btn {
+    background: #28a745;
+    color: white;
+    width: 100%;
+    margin-top: 20px;
+}
+
+.continue-btn:hover {
+    background: #218838;
+}
+
+/* 解释容器 */
+.explanation-container {
+    background: white;
+    border-radius: 15px;
+    padding: 30px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+    margin-top: 20px;
+}
+
+.explanation-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #f8f9fa;
+}
+
+.explanation-header h3 {
+    color: #667eea;
+    font-size: 1.3rem;
+}
+
+.close-explanation {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #999;
+    padding: 5px;
+}
+
+.close-explanation:hover {
+    color: #666;
+}
+
+.explanation-content > div {
+    margin-bottom: 20px;
+}
+
+.explanation-content strong {
+    color: #333;
+    display: block;
+    margin-bottom: 8px;
+}
+
+.correct-answer {
+    color: #28a745;
+}
+
+.explanation-text,
+.chinese-explanation {
+    color: #666;
+    line-height: 1.6;
+}
+
+/* 完成页面 */
+.completion-container {
+    background: white;
+    border-radius: 15px;
+    padding: 50px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+    margin-top: 50px;
+    text-align: center;
+}
+
+.completion-card h2 {
+    color: #667eea;
+    font-size: 2rem;
+    margin-bottom: 30px;
+}
+
+.score-display {
+    margin-bottom: 40px;
+}
+
+.final-score {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #28a745;
+    margin-bottom: 10px;
+}
+
+.score-breakdown {
+    font-size: 1.1rem;
+    color: #666;
+}
+
+.completion-actions {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .container {
+        padding: 15px;
+    }
+
+    .header h1 {
+        font-size: 2rem;
+    }
+
+    .quiz-selection {
+        grid-template-columns: 1fr;
+        gap: 20px;
+    }
+
+    .quiz-header {
+        flex-direction: column;
+        text-align: center;
+        gap: 15px;
+    }
+
+    .quiz-header h2 {
+        font-size: 1.5rem;
+    }
+
+    .quiz-stats {
+        justify-content: center;
+    }
+
+    .quiz-header {
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .progress-container {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .progress-bar {
+        width: 100%;
+    }
+
+    .question-footer {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .nav-btn,
+    .submit-btn {
+        width: 100%;
+    }
+
+    .completion-actions {
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .action-btn {
+        width: 100%;
+        max-width: 200px;
+    }
+}
