@@ -1,0 +1,12 @@
+[2025-10-20T17:18:05.702Z] Loaded security config with 2 allowed paths
+[2025-10-20T17:18:05.703Z] Security module initialized
+[2025-10-20T17:18:05.704Z] Starting MCP Terminal server...
+[2025-10-20T17:18:05.704Z] Current working directory: e:\Code\MLS\MLS3
+[2025-10-20T17:18:05.705Z] Process arguments: ["D:\\Program Files\\nodejs\\node.exe","C:\\Users\\90538\\AppData\\Local\\npm-cache\\_npx\\3520434043d140a8\\node_modules\\terminal-mcp-server\\bin\\terminal-mcp-server.js"]
+[2025-10-20T17:18:07.529Z] Received request: {"method":"tools/list"}
+[2025-10-20T17:42:06.522Z] Loaded security config with 2 allowed paths
+[2025-10-20T17:42:06.523Z] Security module initialized
+[2025-10-20T17:42:06.524Z] Starting MCP Terminal server...
+[2025-10-20T17:42:06.528Z] Current working directory: e:\Code\MLS\MLS3
+[2025-10-20T17:42:06.528Z] Process arguments: ["D:\\Program Files\\nodejs\\node.exe","C:\\Users\\90538\\AppData\\Local\\npm-cache\\_npx\\3520434043d140a8\\node_modules\\terminal-mcp-server\\bin\\terminal-mcp-server.js"]
+[2025-10-20T17:42:08.541Z] Received request: {"method":"tools/list"}
