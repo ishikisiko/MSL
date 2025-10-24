@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -15,30 +13,6 @@ import tensorflow_model_optimization as tfmot
 
 
 AUTOTUNE = tf.data.AUTOTUNE
-
-
-@dataclass
-class OptimizationResult:
-    """Container with metrics and artefacts for a single optimisation run."""
-
-    model_name: str
-    trained_model: keras.Model
-    histories: List[keras.callbacks.History]
-    evaluation: Dict[str, float]
-    quantized_models: Dict[str, object]
-    memory_strategies: Dict[str, object]
-
-
-def _build_training_callbacks() -> List[keras.callbacks.Callback]:
-    """Return a default list of callbacks shared across optimisation runs."""
-
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor="val_accuracy", patience=3, restore_best_weights=True
-    )
-    reduce_lr = keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss", factor=0.5, patience=2, min_lr=5e-6
-    )
-    return [early_stopping, reduce_lr]
 
 
 def create_optimized_models(
@@ -79,7 +53,6 @@ def create_latency_optimized_model(
     input_shape: Tuple[int, int, int] = (160, 160, 3),
     num_classes: int = 10,
     alpha: float = 0.5,
-    se_ratio: float = 0.25,
 ) -> keras.Model:
     """Create a MobileNetV2 variant tuned for low inference latency."""
 
@@ -94,23 +67,6 @@ def create_latency_optimized_model(
     )
     backbone.trainable = False
     x = backbone(x, training=False)
-
-    # Lightweight squeeze-and-excitation block for the final features to
-    # encourage channel re-weighting without significant latency overhead.
-    squeeze = layers.GlobalAveragePooling2D(name="latency_gap")(x)
-    squeeze = layers.Dense(
-        int(backbone.output_shape[-1] * se_ratio),
-        activation="relu",
-        name="latency_se_dense",
-    )(squeeze)
-    excite = layers.Dense(
-        backbone.output_shape[-1],
-        activation="sigmoid",
-        name="latency_se_gate",
-    )(squeeze)
-    excite = layers.Reshape((1, 1, backbone.output_shape[-1]), name="latency_se_reshape")(excite)
-    x = layers.Multiply(name="latency_se_scale")([x, excite])
-
     outputs = _build_head(x, num_classes, dropout_rate=0.1)
     model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_latency_opt")
     return _compile_model(model, learning_rate=7.5e-4)
@@ -135,11 +91,6 @@ def create_memory_optimized_model(
     )
     backbone.trainable = False
     x = backbone(x, training=False)
-
-    # Apply depthwise separable projection to reduce the channel footprint
-    # before global pooling. This greatly lowers parameter count.
-    x = layers.DepthwiseConv2D(3, padding="same", name="memory_dw")(x)
-    x = layers.Conv2D(int(backbone.output_shape[-1] * 0.75), 1, activation="relu6", name="memory_pw")(x)
     outputs = _build_head(x, num_classes, dropout_rate=0.3)
     base_model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_memory_opt_base")
 
@@ -160,7 +111,6 @@ def create_energy_optimized_model(
     input_shape: Tuple[int, int, int] = (192, 192, 3),
     num_classes: int = 10,
     alpha: float = 0.5,
-    dropout_rate: float = 0.25,
 ) -> keras.Model:
     """Create a MobileNetV2 variant prepared for quantization-aware training."""
 
@@ -175,46 +125,23 @@ def create_energy_optimized_model(
     )
     backbone.trainable = False
     x = backbone(x, training=False)
-
-    # Incorporate an early-exit branch for low-compute scenarios. The branch is
-    # optional and only used when explicit inference shortcuts are required.
-    intermediate = layers.GlobalAveragePooling2D(name="energy_gap")(x)
-    shallow_logits = layers.Dense(num_classes, activation="softmax", name="energy_early_exit")(intermediate)
-
-    outputs = _build_head(x, num_classes, dropout_rate=dropout_rate)
-    float_model = keras.Model(
-        inputs=inputs,
-        outputs={"classifier": outputs, "energy_early_exit": shallow_logits},
-        name="mobilenetv2_energy_opt",
-    )
+    outputs = _build_head(x, num_classes, dropout_rate=0.25)
+    float_model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_energy_opt")
 
     quantize_model = tfmot.quantization.keras.quantize_model
     qat_model = quantize_model(float_model)
-    return _compile_model(
-        qat_model,
-        learning_rate=5e-4,
-        loss={
-            "classifier": "sparse_categorical_crossentropy",
-            "energy_early_exit": "sparse_categorical_crossentropy",
-        },
-        metrics={"classifier": ["accuracy"], "energy_early_exit": ["accuracy"]},
-    )
+    return _compile_model(qat_model, learning_rate=5e-4)
 
 
 def apply_quantization_optimizations(
     model: keras.Model,
     x_train_sample: np.ndarray,
-    y_train_sample: Optional[np.ndarray] = None,
 ) -> Dict[str, object]:
     """Generate quantized variants of ``model`` using multiple strategies."""
 
     return {
         "ptq_int8": post_training_quantization(model, x_train_sample),
-        "qat_int8": quantization_aware_training(
-            model,
-            x_train_sample=x_train_sample,
-            y_train_sample=y_train_sample,
-        ),
+        "qat_int8": quantization_aware_training(model, x_train_sample),
         "mixed_precision": mixed_precision_quantization(model),
         "dynamic_range": dynamic_range_quantization(model),
     }
@@ -250,7 +177,6 @@ def post_training_quantization(model: keras.Model, x_train_sample: np.ndarray) -
 def quantization_aware_training(
     model: keras.Model,
     x_train_sample: np.ndarray,
-    y_train_sample: Optional[np.ndarray] = None,
     fine_tune_epochs: int = 1,
 ) -> keras.Model:
     """Create a quantisation-aware clone of ``model`` for further training."""
@@ -265,10 +191,8 @@ def quantization_aware_training(
 
     if x_train_sample.size:
         processed = mobilenet_v2.preprocess_input(x_train_sample.astype(np.float32))
-        labels = y_train_sample if y_train_sample is not None else np.zeros(len(x_train_sample), dtype=np.int32)
         dataset = (
-            tf.data.Dataset.from_tensor_slices((processed, labels))
-            .shuffle(buffer_size=len(processed))
+            tf.data.Dataset.from_tensor_slices((processed, np.zeros(len(x_train_sample), dtype=np.int32)))
             .batch(32)
             .prefetch(AUTOTUNE)
         )
@@ -442,134 +366,3 @@ def find_optimal_batch_size(
         "approximate_param_memory_mb": param_memory / (1024 ** 2),
         "approximate_activation_memory_mb": feature_map_memory / (1024 ** 2),
     }
-
-
-def train_optimized_model(
-    model: keras.Model,
-    train_data: tf.data.Dataset,
-    validation_data: tf.data.Dataset,
-    fine_tune_at: Optional[int] = None,
-    head_epochs: int = 3,
-    fine_tune_epochs: int = 5,
-    fine_tune_lr: float = 5e-5,
-) -> List[keras.callbacks.History]:
-    """Train an optimised model using a two-stage fine-tuning schedule."""
-
-    callbacks = _build_training_callbacks()
-    histories: List[keras.callbacks.History] = []
-
-    history_head = model.fit(
-        train_data,
-        validation_data=validation_data,
-        epochs=head_epochs,
-        callbacks=callbacks,
-        verbose=0,
-    )
-    histories.append(history_head)
-
-    if fine_tune_at is None:
-        fine_tune_at = max(len(model.layers) - 40, 0)
-
-    if fine_tune_at is not None:
-        trainable = False
-        for index, layer in enumerate(model.layers):
-            if index >= fine_tune_at:
-                trainable = True
-            layer.trainable = trainable
-
-        model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=fine_tune_lr),
-            loss=model.loss,
-            metrics=model.metrics,
-        )
-        history_fine = model.fit(
-            train_data,
-            validation_data=validation_data,
-            epochs=fine_tune_epochs,
-            callbacks=callbacks,
-            verbose=0,
-        )
-        histories.append(history_fine)
-
-    return histories
-
-
-def evaluate_model(model: keras.Model, test_data: Iterable, batch_size: int = 32) -> Dict[str, float]:
-    """Evaluate ``model`` on ``test_data`` and record latency and accuracy."""
-
-    if isinstance(test_data, tf.data.Dataset):
-        dataset = test_data.cache().prefetch(AUTOTUNE)
-    else:
-        x_test, y_test = test_data
-        dataset = (
-            tf.data.Dataset.from_tensor_slices((x_test, y_test))
-            .batch(batch_size)
-            .prefetch(AUTOTUNE)
-        )
-
-    start = time.perf_counter()
-    evaluation = model.evaluate(dataset, return_dict=True, verbose=0)
-    inference_time = (time.perf_counter() - start) * 1e3  # milliseconds
-
-    sample_dataset = dataset.take(1)
-    single_start = time.perf_counter()
-    inputs = None
-    for batch in sample_dataset:
-        inputs = batch[0] if isinstance(batch, tuple) else batch
-        model.predict(inputs, verbose=0)
-        break
-
-    if inputs is not None:
-        if hasattr(inputs, "shape") and inputs.shape[0] is not None:
-            batch_size_value = int(inputs.shape[0])
-        else:
-            batch_size_value = int(tf.shape(inputs)[0].numpy())
-        single_latency = (time.perf_counter() - single_start) * 1e3 / max(batch_size_value, 1)
-    else:
-        single_latency = float("nan")
-
-    evaluation.update(
-        {
-            "latency_ms": inference_time,
-            "single_sample_latency_ms": float(single_latency),
-        }
-    )
-    return evaluation
-
-
-def run_hardware_aware_optimization(
-    train_data: tf.data.Dataset,
-    validation_data: tf.data.Dataset,
-    test_data: tf.data.Dataset,
-    x_train_sample: np.ndarray,
-    y_train_sample: np.ndarray,
-    memory_budget_mb: int = 512,
-) -> Dict[str, OptimizationResult]:
-    """Execute the full optimisation workflow described in the assignment."""
-
-    results: Dict[str, OptimizationResult] = {}
-    optimized_models = create_optimized_models()
-
-    for name, model in optimized_models.items():
-        histories = train_optimized_model(model, train_data, validation_data)
-        evaluation = evaluate_model(model, test_data)
-        quantized = apply_quantization_optimizations(
-            model,
-            x_train_sample=x_train_sample,
-            y_train_sample=y_train_sample,
-        )
-        memory_strategies = implement_memory_optimizations(model)
-        memory_strategies["optimal_batch_size"] = find_optimal_batch_size(
-            model, memory_budget_mb=memory_budget_mb
-        )
-
-        results[name] = OptimizationResult(
-            model_name=name,
-            trained_model=model,
-            histories=histories,
-            evaluation=evaluation,
-            quantized_models=quantized,
-            memory_strategies=memory_strategies,
-        )
-
-    return results

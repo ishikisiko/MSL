@@ -235,6 +235,8 @@ def benchmark_baseline_model(
     return metrics
 
 
+# --- 主要训练流程 ---
+
 if __name__ == "__main__":
     train_ds, val_ds, test_ds = load_and_preprocess_data()
     model = create_baseline_model()
