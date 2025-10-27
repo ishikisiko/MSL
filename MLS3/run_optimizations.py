@@ -84,7 +84,7 @@ def create_and_train_optimized_variants(train_ds, val_ds):
     latency_model.fit(
         train_ds.map(lambda x, y: (tf.image.resize(x, [128, 128]), y)),
         validation_data=val_ds.map(lambda x, y: (tf.image.resize(x, [128, 128]), y)),
-        epochs=3,
+        epochs=10,
         verbose=1
     )
     latency_model.save("optimized_models/latency_optimized.keras")
@@ -107,7 +107,7 @@ def create_and_train_optimized_variants(train_ds, val_ds):
     memory_model.fit(
         train_ds.map(lambda x, y: (tf.image.resize(x, [96, 96]), y)),
         validation_data=val_ds.map(lambda x, y: (tf.image.resize(x, [96, 96]), y)),
-        epochs=3,
+        epochs=10,
         verbose=1
     )
     memory_model.save("optimized_models/memory_optimized.keras")
@@ -129,7 +129,7 @@ def create_and_train_optimized_variants(train_ds, val_ds):
     energy_model.fit(
         train_ds.map(lambda x, y: (tf.image.resize(x, [96, 96]), y)),
         validation_data=val_ds.map(lambda x, y: (tf.image.resize(x, [96, 96]), y)),
-        epochs=3,
+        epochs=10,
         verbose=1
     )
     energy_model.save("optimized_models/energy_optimized.keras")

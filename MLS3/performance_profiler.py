@@ -19,6 +19,10 @@ from tensorflow.python.framework.convert_to_constants import (
     convert_variables_to_constants_v2_as_graph,
 )
 
+# Suppress TensorFlow logging to avoid TensorSpec spam
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress INFO and WARNING messages
+tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+
 
 def calculate_model_metrics(
     model: keras.Model, batch_size: int = 1
@@ -44,8 +48,12 @@ def calculate_model_metrics(
         size_bytes += np.prod(weight.shape) * dtype.itemsize
     metrics["model_size_mb"] = size_bytes / (1024 ** 2)
     
-    # FLOPs calculation
+    # FLOPs calculation - suppress TensorFlow logging to avoid TensorSpec spam
     try:
+        # Temporarily suppress TensorFlow logging
+        old_verbosity = tf.compat.v1.logging.get_verbosity()
+        tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+        
         inputs = tf.TensorSpec([batch_size, *model.input_shape[1:]], tf.float32)
         concrete_fn = tf.function(model).get_concrete_function(inputs)
         frozen_func, graph_def = convert_variables_to_constants_v2_as_graph(concrete_fn)
@@ -58,7 +66,15 @@ def calculate_model_metrics(
                 graph=graph, run_meta=run_meta, cmd="op", options=opts
             )
             metrics["flops"] = float(flops.total_float_ops if flops is not None else 0)
+        
+        # Restore original logging verbosity
+        tf.compat.v1.logging.set_verbosity(old_verbosity)
     except Exception as e:
+        # Restore logging verbosity even if an error occurred
+        try:
+            tf.compat.v1.logging.set_verbosity(old_verbosity)
+        except:
+            pass
         print(f"Warning: FLOPs calculation failed: {e}")
         metrics["flops"] = 0.0
     
