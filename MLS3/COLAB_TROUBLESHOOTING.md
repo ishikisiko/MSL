@@ -15,57 +15,60 @@ opencv-python requires numpy>=2.0, but you have numpy 1.26.4
 ```
 
 ### 原因分析
-Colab 环境（2025年10月）中的包版本要求：
-- **TensorFlow 2.16+**: 需要 `numpy>=2.0`（Colab 已不再提供 2.15）
-- **所有现代包**: 都已支持 NumPy 2.0
+Colab 环境（2025年10月）中的包版本冲突：
+- **NumPy 版本窗口问题**: 
+  - OpenCV/CuPy 需要: `2.0 <= numpy < 2.3`
+  - TensorFlow 2.19+ 会自动安装最新的 NumPy (可能是 2.3.4)
+  - 但其他预装包还没适配 NumPy 2.3
 
-**好消息**: 冲突已在新版本中解决！只需确保使用最新版本即可。
+**核心策略**: Colab 已预装大部分包，**只安装必需的包**，避免触发大规模依赖解析。
 
 ### 解决方案
 
-#### 方案 A: 使用最新版本（推荐）⭐
+#### 方案 A: 最小化安装（推荐）⭐
 
 在 Colab 新单元格中运行：
 
 ```python
-# 直接安装最新版本（已解决冲突）
-!pip install --upgrade tensorflow keras numpy
+# 只修复 NumPy 版本，不重装其他包
+!pip install -q "numpy>=2.0,<2.3"
+
+# 只安装 Colab 没有的包
+!pip install -q tensorflow-model-optimization line-profiler
 
 # 验证
 import numpy as np
 import tensorflow as tf
-print(f"NumPy 版本: {np.__version__}")
-print(f"TensorFlow 版本: {tf.__version__}")
-print("✓ 版本兼容，无冲突")
+print(f"✓ NumPy: {np.__version__}")
+print(f"✓ TensorFlow: {tf.__version__}")
+print("✓ 所有依赖就绪")
 ```
 
-#### 方案 B: 重启运行时（如果仍有问题）
+#### 方案 B: 如果方案 A 仍有问题
+
+创建独立虚拟环境（避免与 Colab 预装包冲突）：
 
 ```python
-# 1. 重启运行时（清除所有冲突）
-import os
-os.kill(os.getpid(), 9)  # 这将重启 Colab 运行时
+# 注意：这会断开当前会话
+!pip install virtualenv
+!virtualenv myenv --system-site-packages
+!source myenv/bin/activate && pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization
+
+# 然后在所有后续单元格前运行
+!source myenv/bin/activate
 ```
 
-运行时重启后，继续：
+#### 方案 C: 忽略警告继续运行
+
+如果只是警告但不影响项目代码：
 
 ```python
-# 2. 安装兼容的版本
-!pip install tensorflow>=2.16 keras numpy>=2.0
+# 直接安装项目需要的包
+!pip install -q tensorflow-model-optimization line-profiler
 
-# 3. 安装其他依赖
-!pip install pandas matplotlib seaborn plotly
-!pip install psutil memory-profiler tensorflow-model-optimization
-!pip install onnx onnxruntime scikit-learn tqdm pyyaml
-
-print("✓ 所有依赖安装完成")
-```
-
-#### 方案 C: 使用自动修复脚本
-
-```python
-# 运行修复脚本（会自动处理版本问题）
-!python colab_numpy_fix.py
+# 验证项目代码能否运行
+import part1_baseline_model
+print("✓ 模块导入成功，警告可忽略")
 ```
 
 ### 快速修复命令（一键运行）
@@ -73,22 +76,25 @@ print("✓ 所有依赖安装完成")
 将以下代码复制到 Colab 新单元格：
 
 ```python
-# 🔧 依赖安装快速修复（2025-10 更新）
+# 🔧 最小化依赖修复（推荐）
 import subprocess
 import sys
 
-print("正在安装兼容的依赖包...")
+print("修复 NumPy 版本...")
+# 只修复 NumPy，不动其他包
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy>=2.0,<2.3"])
 
-# 安装最新兼容版本
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "--upgrade", 
-                "tensorflow", "keras", "numpy"])
+print("安装项目特定依赖...")
+# 只安装 Colab 缺少的包
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", 
+                "tensorflow-model-optimization", "line-profiler"])
 
 # 验证
 import numpy as np
 import tensorflow as tf
-print(f"✓ NumPy 版本: {np.__version__}")
-print(f"✓ TensorFlow 版本: {tf.__version__}")
-print(f"✓ 安装完成，无冲突")
+print(f"\n✓ NumPy: {np.__version__}")
+print(f"✓ TensorFlow: {tf.__version__}")
+print("✓ 修复完成")
 ```
 
 ---

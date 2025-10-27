@@ -13,10 +13,10 @@
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-# 步骤 2: 安装依赖
-!pip install -q tensorflow keras numpy pandas matplotlib seaborn psutil \
-              memory-profiler tensorflow-model-optimization onnx onnxruntime \
-              scikit-learn tqdm pyyaml
+# 步骤 2: 最小化安装（避免依赖冲突）
+!pip install -q "numpy>=2.0,<2.3"  # 修复 NumPy 版本
+!pip install -q tensorflow-model-optimization line-profiler  # 安装缺少的包
+# 注意：pandas, matplotlib, seaborn, tensorflow 等 Colab 已预装
 
 # 步骤 3: 运行（如果已有基线模型）
 !python run_optimizations.py
@@ -56,8 +56,11 @@ drive.mount('/content/drive')
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-# 安装和运行
-!pip install -q -r requirements.txt
+# 最小化安装
+!pip install -q "numpy>=2.0,<2.3"
+!pip install -q tensorflow-model-optimization line-profiler
+
+# 运行
 !python run_optimizations.py
 
 # 结果自动保存到 Drive，下次可直接继续

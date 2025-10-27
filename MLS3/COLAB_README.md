@@ -13,10 +13,11 @@
 在 [Google Colab](https://colab.research.google.com) 新笔记本中运行：
 
 ```python
-# 一键完整运行
+# 一键完整运行（最小化安装）
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q -r requirements.txt
+!pip install -q "numpy>=2.0,<2.3"  # 修复 NumPy 版本
+!pip install -q tensorflow-model-optimization line-profiler  # 安装缺少的包
 !python run_optimizations.py
 ```
 
@@ -42,8 +43,11 @@ drive.mount('/content/drive')
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-# 安装和运行
-!pip install -q -r requirements.txt
+# 最小化安装
+!pip install -q "numpy>=2.0,<2.3"
+!pip install -q tensorflow-model-optimization line-profiler
+
+# 运行
 !python run_optimizations.py
 ```
 

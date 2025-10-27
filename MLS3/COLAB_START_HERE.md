@@ -9,12 +9,15 @@
 打开 [Google Colab](https://colab.research.google.com)，创建新笔记本，运行：
 
 ```python
-# 一键完整运行
+# 一键完整运行（最小化安装，避免冲突）
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q --upgrade tensorflow keras numpy
-!pip install -q pandas matplotlib seaborn plotly psutil memory-profiler
-!pip install -q tensorflow-model-optimization onnx onnxruntime scikit-learn tqdm pyyaml
+
+# 只修复 NumPy 版本和安装缺少的包
+!pip install -q "numpy>=2.0,<2.3"
+!pip install -q tensorflow-model-optimization line-profiler
+
+# 运行优化流程
 !python run_optimizations.py
 ```
 
