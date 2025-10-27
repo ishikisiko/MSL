@@ -1,6 +1,6 @@
 # Google Colab 常见问题解决方案
 
-## 问题 1: NumPy 版本冲突错误
+## 问题 1: NumPy / TensorFlow 版本冲突
 
 ### 错误信息
 ```
@@ -11,27 +11,28 @@ Expected 96 from C header, got 88 from PyObject
 或者：
 ```
 ERROR: pip's dependency resolver does not currently take into account all the packages...
-tensorflow-model-optimization requires numpy<1.24,>=1.18.5 and you have numpy 2.0.0
+Detected distribution requires numpy<1.26 and you have numpy 2.1.0
 ```
 
 ### 原因分析
-Colab 环境（2025年10月）中的包版本冲突：
-- **NumPy 版本窗口问题**
-    - TensorFlow 2.12/2.13 wheels 仅兼容 `numpy < 1.24`
-    - Colab 新版镜像预装了 `numpy 2.x`
-    - `tensorflow-model-optimization` 同样要求 `numpy < 1.24`
+Colab 近期镜像通常预装 `tensorflow==2.19.x` 与 `numpy>=2.0`。本项目在以下组合下验证通过：
+- `tensorflow==2.15.1`
+- `tensorflow-model-optimization==0.8.0`
+- `numpy==1.25.2`
 
-**核心策略**: 保持 NumPy 在 1.23.x，**只安装缺失包**，避免触发大规模降级/升级。
+任意一个包被升级都会触发 ABI 不兼容或量化工具报错。
 
 ### 解决方案
 
-#### 方案 A: 最小化安装（推荐）⭐
+#### 方案 A: 同步 requirements.txt（推荐）⭐
 
 在 Colab 新单元格中运行：
 
 ```python
-!pip install -q "numpy==1.23.5"
-!pip install -q tensorflow-model-optimization line-profiler
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 
 import numpy as np
 import tensorflow as tf
@@ -40,6 +41,8 @@ print(f"✓ TensorFlow: {tf.__version__}")
 print("✓ 所有依赖就绪")
 ```
 
+> 如果仍检测到 TensorFlow 2.19，可在第二条命令后追加 `--force-reinstall` 再次执行。
+
 #### 方案 B: 虚拟环境隔离
 
 如果你需要完全隔离环境：
@@ -47,18 +50,18 @@ print("✓ 所有依赖就绪")
 ```python
 !pip install virtualenv
 !virtualenv myenv --system-site-packages
-!source myenv/bin/activate && pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
+!source myenv/bin/activate && python -m pip install --quiet -r requirements.txt
 
 # 后续单元格开头记得激活环境
 !source myenv/bin/activate
 ```
 
-#### 方案 C: 仅修复 NumPy 再继续
+#### 方案 C: 仅修复 NumPy（临时）
 
 如果只想快速验证：
 
 ```python
-!pip install -q "numpy==1.23.5"
+!python -m pip install --quiet "numpy==1.25.2"
 import part1_baseline_model
 print("✓ NumPy 重置完成，可继续运行项目")
 ```
@@ -69,12 +72,14 @@ print("✓ NumPy 重置完成，可继续运行项目")
 import subprocess
 import sys
 
-print("修复 NumPy 版本...")
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy==1.23.5"])
+print("升级 pip...")
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--upgrade", "pip"])
 
-print("安装项目特定依赖...")
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", 
-                                "tensorflow-model-optimization", "line-profiler"])
+print("同步项目依赖...")
+subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "--force-reinstall", "-r", "requirements.txt"])
+
+# Optional: install line_profiler if you need %lprun
+# subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "line_profiler"])
 
 import numpy as np
 import tensorflow as tf
@@ -118,7 +123,6 @@ else:
 ```
 FileNotFoundError: baseline_mobilenetv2.keras not found
 ```
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy==1.23.5"])
 ### 解决方案
 
 #### 选项 1: 训练新模型

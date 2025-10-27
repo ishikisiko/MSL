@@ -48,7 +48,10 @@ The assignment consists of four main parts:
 ```python
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q -r requirements.txt
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: only if you plan to use %lprun
+# !python -m pip install --quiet line_profiler
 !python run_optimizations.py
 ```
 
@@ -77,6 +80,8 @@ cd MLS3
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+# Optional: install profiling helpers when using %lprun
+# python -m pip install line_profiler
 ```
 
 	See `DEPENDENCIES.md` for a breakdown of the packages and compatibility notes.

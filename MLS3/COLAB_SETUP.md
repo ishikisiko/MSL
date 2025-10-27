@@ -47,11 +47,11 @@
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-# 安装依赖（先固定 NumPy 避免冲突）
-!pip install -q "numpy==1.23.5"
-!pip install -q tensorflow keras pandas matplotlib seaborn
-!pip install -q psutil memory-profiler tensorflow-model-optimization
-!pip install -q onnx onnxruntime scikit-learn tqdm pyyaml
+# 安装依赖
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 
 # 检查 GPU
 import tensorflow as tf
@@ -121,6 +121,8 @@ drive.mount('/content/drive')
 ```python
 # 单元格 3: 安装依赖和运行
 !pip install -q -r requirements.txt
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 
 # 运行流程
 !python run_optimizations.py
@@ -139,6 +141,8 @@ from google.colab import drive
 drive.mount('/content/drive')
 %cd /content/drive/MyDrive/MLS3_Project/MSL/MLS3
 !git pull  # 获取最新更新
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 !python run_optimizations.py
 ```
 
@@ -168,7 +172,6 @@ drive.mount('/content/drive')
 ```python
 # 减小批量大小
 # 在 run_optimizations.py 中修改或直接运行：
-from part1_baseline_model import load_and_preprocess_data
 train_ds, val_ds, test_ds = load_and_preprocess_data(batch_size=32)  # 默认64
 ```
 
@@ -194,7 +197,6 @@ print("基线模型存在:", os.path.exists('baseline_mobilenetv2.keras'))
 ## 📊 推荐工作流程
 
 ### 完整流程（首次运行）
-
 ```
 Day 1: 训练基线
 ├─ 上传项目文件到 Colab/Drive

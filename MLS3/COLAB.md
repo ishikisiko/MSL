@@ -11,9 +11,12 @@
 ```python
 # 一键完整运行
 !git clone https://github.com/ishikisiko/MSL.git && cd MSL/MLS3 && \
-pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler && \
+python -m pip install --upgrade pip && \
+python -m pip install --quiet -r requirements.txt && \
 python run_optimizations.py
 ```
+
+> Optional: run `python -m pip install --quiet line_profiler` if you plan to use `%lprun` profiling magic later on.
 
 **就这么简单！** 🎉
 
@@ -26,7 +29,10 @@ python run_optimizations.py
 ```python
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: only for %lprun usage
+# !python -m pip install --quiet line_profiler
 !python run_optimizations.py
 ```
 
@@ -52,7 +58,10 @@ drive.mount('/content/drive')
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: only for %lprun usage
+# !python -m pip install --quiet line_profiler
 !python run_optimizations.py
 ```
 
@@ -79,17 +88,21 @@ drive.mount('/content/drive')
 
 ### 1. 依赖冲突错误
 
-**症状**: `ERROR: pip's dependency resolver...`
+**症状**: `ERROR: pip's dependency resolver...` 或 `ValueError: numpy.dtype size changed...`
 
-**解决**: 使用最小化安装（已包含在上述命令中）
+**原因**: Colab 默认镜像会预装 TensorFlow 2.19 与 NumPy 2.x。本项目固定使用 `tensorflow==2.15.1`、`numpy==1.25.2` 和 `tensorflow-model-optimization==0.8.0` 这一组合，确保量化与推理代码兼容。
+
+**解决**: 按照 `requirements.txt` 重新同步依赖。
 
 ```python
-# 只安装必需的包，避免冲突
-!pip install -q "numpy==1.23.5"  # 修复 NumPy 版本
-!pip install -q tensorflow-model-optimization line-profiler
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 ```
 
-**原因**: TensorFlow 2.12 在 Colab 上依赖 NumPy < 1.24；升级到 NumPy 2.x 会与 `tensorflow-model-optimization` 等包冲突
+> 如果仍看到旧版本（如 TensorFlow 2.19），可追加 `--force-reinstall` 重新覆盖：
+> `!python -m pip install --quiet --force-reinstall -r requirements.txt`
 
 ### 2. GPU 未检测到
 
@@ -164,7 +177,10 @@ MLS3/
 # 测试导入
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
+!python -m pip install --upgrade pip
+!python -m pip install --quiet -r requirements.txt
+# Optional: install line_profiler if you need %lprun
+# !python -m pip install --quiet line_profiler
 
 # 验证环境
 import numpy as np

@@ -14,6 +14,12 @@ summarises the scope and rationale for each entry.
 | `black` | 24.4.2 | Used by `make lint`/`make format` for code formatting. |
 | `flake8` | 7.1.1 | Complements `black` in `make lint` for static analysis. |
 
+### Optional Tools
+
+| Package | Version | Purpose |
+| --- | --- | --- |
+| `line_profiler` | latest | Install manually when you need `%lprun` profiling magic inside notebooks. |
+
 ## Installation Tips
 
 ### Windows / Local
