@@ -2,7 +2,9 @@
 
 ## 🎯 最简单的方法（3步完成）
 
-### 方法 A：从 GitHub 直接运行
+### 方法 A：从 GitHub 直接运行（推荐）⭐
+
+**仓库地址**: https://github.com/ishikisiko/MSL.git
 
 在 Colab 新笔记本中依次运行：
 
@@ -26,36 +28,40 @@
 
 ---
 
-### 方法 B：上传 ZIP 文件运行
+### 方法 B：使用专用 Notebook（新手友好）⭐
+
+1. 上传 `colab_setup.ipynb` 到 Colab
+2. 按顺序运行所有单元格（自动克隆项目）
+3. 等待完成并下载结果
+
+---
+
+### 方法 C：使用 Google Drive（最灵活）
 
 **本地准备：**
-```powershell
-# 在本地运行打包脚本
-python prepare_colab.py
-```
+无需准备，直接在 Colab 运行
 
 **在 Colab 中运行：**
 ```python
-# 上传 ZIP
-from google.colab import files
-uploaded = files.upload()
+# 挂载 Drive
+from google.colab import drive
+drive.mount('/content/drive')
 
-# 解压
-!unzip -q MLS3_colab_*.zip
-%cd MLS3
+# 在 Drive 中工作
+%cd /content/drive/MyDrive
+!mkdir -p MLS3_Project
+%cd MLS3_Project
+
+# 克隆项目
+!git clone https://github.com/ishikisiko/MSL.git
+%cd MSL/MLS3
 
 # 安装和运行
 !pip install -q -r requirements.txt
 !python run_optimizations.py
+
+# 结果自动保存到 Drive，下次可直接继续
 ```
-
----
-
-### 方法 C：使用专用 Notebook（最完整）
-
-1. 上传 `colab_setup.ipynb` 到 Colab
-2. 按顺序运行所有单元格
-3. 自动完成所有步骤
 
 ---
 
@@ -225,40 +231,45 @@ print(os.path.exists('baseline_mobilenetv2.keras'))
 
 ### 完整运行（有基线模型）
 ```python
-!git clone https://github.com/ishikisiko/MSL.git && cd MSL/MLS3 && \
-pip install -q -r requirements.txt && python run_optimizations.py
+!git clone https://github.com/ishikisiko/MSL.git && \
+%cd MSL/MLS3 && \
+pip install -q -r requirements.txt && \
+python run_optimizations.py
 ```
 
 ### 完整运行（无基线模型）
 ```python
-!git clone https://github.com/ishikisiko/MSL.git && cd MSL/MLS3 && \
+!git clone https://github.com/ishikisiko/MSL.git && \
+%cd MSL/MLS3 && \
 pip install -q -r requirements.txt && \
-python part1_baseline_model.py && python run_optimizations.py
+python part1_baseline_model.py && \
+python run_optimizations.py
 ```
 
 ### 仅测试导入
 ```python
-!git clone https://github.com/ishikisiko/MSL.git && cd MSL/MLS3 && \
-pip install -q tensorflow keras && python quick_test.py
+!git clone https://github.com/ishikisiko/MSL.git && \
+%cd MSL/MLS3 && \
+pip install -q tensorflow keras && \
+python quick_test.py
 ```
 
 ---
 
-## 📚 选择合适的方法
+## 🎓 选择合适的方法
 
 | 场景 | 推荐方法 | 说明 |
 |------|----------|------|
-| 首次运行，了解流程 | 方法 C (专用 Notebook) | 有完整说明 |
+| 首次运行，了解流程 | 方法 B (专用 Notebook) | 有完整说明 |
 | 快速运行，已熟悉 | 方法 A (GitHub) | 最快 |
-| 项目未在 GitHub | 方法 B (ZIP) | 本地打包上传 |
-| 多次运行，长时间 | 方法 C + Drive | 结果持久化 |
+| 多次运行，长时间 | 方法 C (Google Drive) | 结果持久化 |
 | 仅测试特定功能 | 教学模式 | 分步理解 |
 
 ---
 
 ## 🎉 快速开始
 
-**最快的方式（如果项目在 GitHub）：**
+**最快的方式：**
 
 1. 打开 https://colab.research.google.com
 2. 新建笔记本

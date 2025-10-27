@@ -1,13 +1,13 @@
 # 🚀 在 Google Colab 运行 MLS3 项目
 
-本指南提供在 Google Colab 上运行 MLS3 多文件项目的三种便捷方法。
+本指南提供在 Google Colab 上运行 MLS3 多文件项目的便捷方法。
 
 ## 📋 准备工作
 
 在开始前，请确保：
 - 有 Google 账号（用于访问 Colab）
-- 已训练基线模型或准备好等待训练（30-60分钟）
 - 建议启用 GPU 加速（Colab 菜单：运行时 → 更改运行时类型 → GPU）
+- 项目仓库：https://github.com/ishikisiko/MSL.git
 
 ---
 
@@ -20,24 +20,13 @@
    - 或访问：https://colab.research.google.com
    - 点击 "文件" → "上传笔记本" → 选择 `colab_setup.ipynb`
 
-2. **选择上传方式**
+2. **自动从 GitHub 克隆**
    
-   Notebook 中提供三种方式：
-   
-   **方式 1A：从 GitHub 克隆（最快）**
+   Notebook 会自动执行：
    ```python
    !git clone https://github.com/ishikisiko/MSL.git
    %cd MSL/MLS3
    ```
-   
-   **方式 1B：上传 ZIP 文件（推荐）**
-   - 在本地将整个 `MLS3/` 文件夹打包成 `MLS3.zip`
-   - 运行 Notebook 中的上传单元格
-   - 自动解压并设置
-   
-   **方式 1C：手动上传文件**
-   - 逐个上传 Python 文件
-   - 适合只想测试部分功能的情况
 
 3. **按顺序运行单元格**
    - 环境设置 → 依赖安装 → 训练/优化 → 查看结果 → 下载
@@ -48,17 +37,13 @@
 
 ---
 
-## 🔥 方法二：使用自动化设置脚本
+## 🔥 方法二：直接运行（最快⚡）
 
-### 创建快速设置脚本
-
-在 Colab 新建笔记本，运行以下代码：
+### 在 Colab 新建笔记本，复制运行以下代码：
 
 ```python
 # 单元格 1: 完整自动化设置
-!pip install -q gdown
-
-# 从 GitHub 克隆（替换为你的仓库）
+# 从 GitHub 克隆
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
@@ -82,10 +67,10 @@ print("GPU 可用:", tf.config.list_physical_devices('GPU'))
 
 ```python
 # 单元格 3: 或分步运行
-# 步骤 1: 训练基线（如需要）
+# 步骤 1: 训练基线（如需要，30-60分钟）
 !python part1_baseline_model.py
 
-# 步骤 2: 运行优化
+# 步骤 2: 运行优化（20-40分钟）
 !python run_optimizations.py
 ```
 
@@ -98,7 +83,6 @@ files.download('MLS3_results.zip')
 ```
 
 ---
-
 ## 📦 方法三：使用 Google Drive 同步（最灵活）
 
 ### 适合需要多次运行和保存中间结果的情况
@@ -113,17 +97,24 @@ drive.mount('/content/drive')
 %cd /content/drive/MyDrive/MLS3
 ```
 
+## 📦 方法三：使用 Google Drive（最灵活⭐）
+
+### 适合需要多次运行和保存中间结果的情况
+
 ```python
-# 单元格 2: 上传项目文件（首次）
-from google.colab import files
-import zipfile
+# 单元格 1: 挂载 Google Drive
+from google.colab import drive
+drive.mount('/content/drive')
 
-uploaded = files.upload()  # 上传 MLS3.zip
+# 在 Drive 中创建项目目录
+!mkdir -p /content/drive/MyDrive/MLS3_Project
+%cd /content/drive/MyDrive/MLS3_Project
+```
 
-for filename in uploaded.keys():
-    if filename.endswith('.zip'):
-        with zipfile.ZipFile(filename, 'r') as zip_ref:
-            zip_ref.extractall('.')
+```python
+# 单元格 2: 克隆项目（首次运行）
+!git clone https://github.com/ishikisiko/MSL.git
+%cd MSL/MLS3
 ```
 
 ```python
@@ -138,7 +129,17 @@ for filename in uploaded.keys():
 - 所有文件自动保存到 Google Drive
 - 断线后可以继续运行
 - 结果永久保存，不会因会话结束而丢失
-- 下次打开可直接使用，无需重新上传
+- 下次打开可直接使用，无需重新克隆
+
+**后续运行：**
+```python
+# 直接使用已克隆的项目
+from google.colab import drive
+drive.mount('/content/drive')
+%cd /content/drive/MyDrive/MLS3_Project/MSL/MLS3
+!git pull  # 获取最新更新
+!python run_optimizations.py
+```
 
 ---
 
@@ -152,13 +153,13 @@ for filename in uploaded.keys():
 !ls -la
 
 # 确保在正确的目录
-%cd /content/MLS3  # 或你的项目路径
+%cd MSL/MLS3  # 或你的项目路径
 ```
 
 ### 问题 2: GPU 未启用
 
 1. Colab 菜单：运行时 → 更改运行时类型
-2. 硬件加速器：选择 "GPU" 或 "TPU"
+2. 硬件加速器：选择 "GPU"
 3. 保存 → 会话将重启
 
 ### 问题 3: 内存不足

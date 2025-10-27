@@ -11,7 +11,6 @@
 | **立即开始运行** | [COLAB_QUICKSTART.md](COLAB_QUICKSTART.md) | 快速指南 |
 | **详细了解所有方法** | [COLAB_SETUP.md](COLAB_SETUP.md) | 完整文档 |
 | **使用图形化界面** | [colab_setup.ipynb](colab_setup.ipynb) | Jupyter Notebook |
-| **打包项目上传** | [prepare_colab.py](prepare_colab.py) | Python 脚本 |
 | **查看总结** | [COLAB_SUMMARY.md](COLAB_SUMMARY.md) | 综合概述 |
 
 ---
@@ -60,6 +59,7 @@
 
 内容：
 - ✅ 完整的交互式 Notebook
+- ✅ 自动从 GitHub 克隆项目
 - ✅ 分步骤执行
 - ✅ 实时输出和反馈
 - ✅ 内置可视化
@@ -73,41 +73,12 @@
 
 **使用方法：**
 1. 上传到 Google Colab
-2. 按顺序运行单元格
+2. 按顺序运行单元格（会自动克隆项目）
 3. 等待完成并下载结果
 
 **估计运行时间：** 1-2 小时
 
 ---
-
-### 4. prepare_colab.py 📦
-**适合：需要打包项目的用户**
-
-功能：
-- ✅ 自动打包所有必需文件
-- ✅ 创建完整包或轻量级包
-- ✅ 生成快速启动代码
-- ✅ 检查文件完整性
-
-**使用方法：**
-```powershell
-python prepare_colab.py
-```
-
-然后选择：
-- `1` - 完整包（含所有文件和模型）
-- `2` - 轻量级包（仅代码，需在 Colab 训练）
-- `3` - 两者都创建
-
-**输出：**
-- `MLS3_colab_YYYYMMDD_HHMMSS.zip` - 完整包
-- `MLS3_colab_lite_YYYYMMDD_HHMMSS.zip` - 轻量级包
-
-**估计执行时间：** < 1 分钟
-
----
-
-### 5. COLAB_SUMMARY.md 📋
 **适合：需要全面了解的用户**
 
 内容：

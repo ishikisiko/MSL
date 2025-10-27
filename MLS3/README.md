@@ -41,8 +41,10 @@ The assignment consists of four main parts:
 
 **The easiest way to run this project without local setup:**
 
+**Project Repository**: https://github.com/ishikisiko/MSL.git
+
 1. Open [Google Colab](https://colab.research.google.com)
-2. Upload `colab_setup.ipynb` or run directly from GitHub:
+2. Create a new notebook and run:
 ```python
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
@@ -53,12 +55,12 @@ The assignment consists of four main parts:
 📚 **Detailed Colab Instructions:**
 - Full Guide: See `COLAB_SETUP.md`
 - Quick Start: See `COLAB_QUICKSTART.md`
-- Use `prepare_colab.py` to package project for upload
+- Interactive Notebook: Use `colab_setup.ipynb`
 
 **Advantages:**
 - ✅ Free GPU access
 - ✅ No local environment setup
-- ✅ Pre-installed dependencies
+- ✅ Pre-configured dependencies
 - ✅ Easy sharing and collaboration
 
 ---

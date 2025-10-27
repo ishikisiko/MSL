@@ -6,7 +6,9 @@
 
 ## ⚡ 超快速开始（3 步完成）
 
-### 方法 1: 从 GitHub 直接运行（最快）
+### 方法 1: 从 GitHub 直接运行（最快）⭐
+
+**仓库地址**: https://github.com/ishikisiko/MSL.git
 
 在 [Google Colab](https://colab.research.google.com) 新笔记本中运行：
 
@@ -18,19 +20,31 @@
 !python run_optimizations.py
 ```
 
-### 方法 2: 使用专用 Notebook（推荐新手）
+### 方法 2: 使用专用 Notebook（推荐新手）⭐
 
 1. 上传 `colab_setup.ipynb` 到 Colab
-2. 按顺序运行所有单元格
+2. 按顺序运行所有单元格（会自动从 GitHub 克隆项目）
 3. 下载结果
 
-### 方法 3: 打包上传
+### 方法 3: Google Drive 持久化（多次运行）
 
-```powershell
-# 本地运行
-python prepare_colab.py
+```python
+# 挂载 Drive
+from google.colab import drive
+drive.mount('/content/drive')
 
-# 然后上传生成的 ZIP 到 Colab
+# 切换到 Drive 目录
+%cd /content/drive/MyDrive
+!mkdir -p MLS3_Project
+%cd MLS3_Project
+
+# 克隆项目（首次）
+!git clone https://github.com/ishikisiko/MSL.git
+%cd MSL/MLS3
+
+# 安装和运行
+!pip install -q -r requirements.txt
+!python run_optimizations.py
 ```
 
 ---

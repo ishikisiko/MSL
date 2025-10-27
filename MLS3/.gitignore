@@ -19,6 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+baseline_mobilenetv2.keras
 
 # Virtual Environment
 venv/
