@@ -37,7 +37,33 @@ The assignment consists of four main parts:
 - (Track A) Access to target hardware platforms (optional)
 - (Track B) Simulation tools: QEMU, Renode (see requirements.txt)
 
-### Installation
+### 🚀 Quick Start: Google Colab (Recommended for Quick Testing)
+
+**The easiest way to run this project without local setup:**
+
+1. Open [Google Colab](https://colab.research.google.com)
+2. Upload `colab_setup.ipynb` or run directly from GitHub:
+```python
+!git clone https://github.com/ishikisiko/MSL.git
+%cd MSL/MLS3
+!pip install -q -r requirements.txt
+!python run_optimizations.py
+```
+
+📚 **Detailed Colab Instructions:**
+- Full Guide: See `COLAB_SETUP.md`
+- Quick Start: See `COLAB_QUICKSTART.md`
+- Use `prepare_colab.py` to package project for upload
+
+**Advantages:**
+- ✅ Free GPU access
+- ✅ No local environment setup
+- ✅ Pre-installed dependencies
+- ✅ Easy sharing and collaboration
+
+---
+
+### Local Installation
 
 1. Clone the repository:
 ```bash

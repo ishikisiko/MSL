@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# TensorFlow / Keras
+*.h5
+*.keras
+*.pb
+*.tflite
+*.ckpt
+*.index
+*.meta
+*.data-*
+
+# Model files (keep baseline, ignore others)
+optimized_models/*.keras
+optimized_models/*.tflite
+optimized_models/*.cc
+optimized_models/*.h
+!baseline_mobilenetv2.keras
+
+# Logs and results
+logs/*.log
+logs/*.txt
+results/*.csv
+results/*.json
+results/*.png
+results/*.pdf
+
+# Colab generated files
+MLS3_colab_*.zip
+MLS3_colab_lite_*.zip
+colab_workflow.png
+colab_comparison.png
+colab_time_estimates.png
+
+# Data files (if large)
+*.tar.gz
+*.zip
+*.rar
+
+# OS
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation builds
+_build/
+docs/_build/
+
+# Temporary files
+*.swp
+*.swo
+*~
+.#*
+\#*#
+.*.sw[a-z]
+*.un~
+Session.vim
+.netrwhist
+
+# Platform configs (if containing sensitive info)
+# platform_configs/*.json
+
+# Terminal logs
+terminal-mcp-server.pid

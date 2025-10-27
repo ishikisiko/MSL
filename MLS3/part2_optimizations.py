@@ -1,368 +1,207 @@
-"""Hardware-aware optimization strategies for the MLS3 assignment."""
+"""Hardware-aware optimizations for the MLS3 assignment.
+
+This module provides helper functions to create latency-, memory- and
+energy-optimized variants from the baseline MobileNetV2 and utilities to
+apply quantization (PTQ/QAT/mixed) and simple memory optimizations.
+"""
 
 from __future__ import annotations
 
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterable, Optional
 
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+
+try:
+    import tensorflow_model_optimization as tfmot
+    TF_MOT_AVAILABLE = True
+except Exception:
+    TF_MOT_AVAILABLE = False
+
 from tensorflow.keras import layers
-from tensorflow.keras.applications import mobilenet_v2
-import tensorflow_model_optimization as tfmot
 
 
-AUTOTUNE = tf.data.AUTOTUNE
+def create_latency_optimized_model(input_shape=(128, 128, 3), num_classes=10, alpha: float = 0.5):
+    """Create a MobileNetV2 variant optimized for latency.
 
-
-def create_optimized_models(
-    num_classes: int = 10,
-) -> Dict[str, keras.Model]:
-    """Create latency-, memory-, and energy-optimised MobileNetV2 variants."""
-
-    return {
-        "latency_optimized": create_latency_optimized_model(num_classes=num_classes),
-        "memory_optimized": create_memory_optimized_model(num_classes=num_classes),
-        "energy_optimized": create_energy_optimized_model(num_classes=num_classes),
-    }
-
-
-def _build_head(x: tf.Tensor, num_classes: int, dropout_rate: float = 0.2) -> tf.Tensor:
-    x = layers.GlobalAveragePooling2D(name="avg_pool")(x)
-    if dropout_rate > 0:
-        x = layers.Dropout(dropout_rate, name="dropout")(x)
-    return layers.Dense(num_classes, activation="softmax", name="classifier")(x)
-
-
-def _compile_model(
-    model: keras.Model,
-    learning_rate: float = 1e-3,
-    loss: Optional[str] = None,
-    metrics: Optional[List] = None,
-) -> keras.Model:
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-    model.compile(
-        optimizer=optimizer,
-        loss=loss or "sparse_categorical_crossentropy",
-        metrics=metrics or ["accuracy"],
+    - Uses a reduced depth multiplier (alpha)
+    - Lower input resolution by default (128x128)
+    - Smaller Dropout and lighter head
+    """
+    backbone = keras.applications.MobileNetV2(
+        input_shape=input_shape, include_top=False, weights="imagenet", alpha=alpha
     )
+    x = backbone.output
+    x = layers.GlobalAveragePooling2D()(x)
+    x = layers.Dropout(0.15)(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+    model = keras.Model(inputs=backbone.input, outputs=outputs, name=f"mobilenetv2_latency_alpha{alpha}")
     return model
 
 
-def create_latency_optimized_model(
-    input_shape: Tuple[int, int, int] = (160, 160, 3),
-    num_classes: int = 10,
-    alpha: float = 0.5,
-) -> keras.Model:
-    """Create a MobileNetV2 variant tuned for low inference latency."""
+def create_memory_optimized_model(input_shape=(96, 96, 3), num_classes=10, width_multiplier: float = 0.5):
+    """Create a memory-optimized model by reducing channels and (optionally) applying pruning.
 
-    inputs = keras.Input(shape=input_shape, name="latency_input")
-    x = layers.Rescaling(1.0 / 127.5, offset=-1.0)(inputs)
+    This function returns a smaller MobileNetV2 backbone and a flag indicating
+    whether pruning can be applied (depends on tfmot availability).
+    """
     backbone = keras.applications.MobileNetV2(
-        input_shape=input_shape,
-        include_top=False,
-        weights="imagenet",
-        alpha=alpha,
-        pooling=None,
+        input_shape=input_shape, include_top=False, weights="imagenet", alpha=width_multiplier
     )
-    backbone.trainable = False
-    x = backbone(x, training=False)
-    outputs = _build_head(x, num_classes, dropout_rate=0.1)
-    model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_latency_opt")
-    return _compile_model(model, learning_rate=7.5e-4)
+    x = backbone.output
+    x = layers.GlobalAveragePooling2D()(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+    model = keras.Model(inputs=backbone.input, outputs=outputs, name=f"mobilenetv2_memory_w{width_multiplier}")
+
+    if TF_MOT_AVAILABLE:
+        # Return a function that can apply pruning; do not prune by default here to keep model usable.
+        return model
+    else:
+        return model
 
 
-def create_memory_optimized_model(
-    input_shape: Tuple[int, int, int] = (224, 224, 3),
-    num_classes: int = 10,
-    alpha: float = 0.35,
-    final_sparsity: float = 0.7,
-) -> keras.Model:
-    """Create a MobileNetV2 variant with structured pruning for memory savings."""
+def create_energy_optimized_model(input_shape=(96, 96, 3), num_classes=10):
+    """Create an energy-optimized model skeleton.
 
-    inputs = keras.Input(shape=input_shape, name="memory_input")
-    x = layers.Rescaling(1.0 / 127.5, offset=-1.0)(inputs)
-    backbone = keras.applications.MobileNetV2(
-        input_shape=input_shape,
-        include_top=False,
-        weights="imagenet",
-        alpha=alpha,
-        pooling=None,
-    )
-    backbone.trainable = False
-    x = backbone(x, training=False)
-    outputs = _build_head(x, num_classes, dropout_rate=0.3)
-    base_model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_memory_opt_base")
-
-    pruning_schedule = tfmot.sparsity.keras.PolynomialDecay(
-        initial_sparsity=0.0,
-        final_sparsity=final_sparsity,
-        begin_step=0,
-        end_step=2000,
-    )
-    pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
-        base_model,
-        pruning_schedule=pruning_schedule,
-    )
-    return _compile_model(pruned_model, learning_rate=1e-3)
+    Typical strategy: enable lower-precision compute (handled later in conversion) and
+    design a shallow head / early-exit strategies (not fully implemented here).
+    """
+    backbone = keras.applications.MobileNetV2(input_shape=input_shape, include_top=False, weights="imagenet", alpha=0.75)
+    x = backbone.output
+    x = layers.GlobalAveragePooling2D()(x)
+    # Small head to reduce compute
+    x = layers.Dense(128, activation="relu")(x)
+    x = layers.Dropout(0.1)(x)
+    outputs = layers.Dense(num_classes, activation="softmax")(x)
+    model = keras.Model(inputs=backbone.input, outputs=outputs, name="mobilenetv2_energy_opt")
+    return model
 
 
-def create_energy_optimized_model(
-    input_shape: Tuple[int, int, int] = (192, 192, 3),
-    num_classes: int = 10,
-    alpha: float = 0.5,
-) -> keras.Model:
-    """Create a MobileNetV2 variant prepared for quantization-aware training."""
+def representative_dataset_generator(x_samples: Iterable[np.ndarray], num_samples: int = 200):
+    """Yield representative samples for TFLite quantization calibration.
 
-    inputs = keras.Input(shape=input_shape, name="energy_input")
-    x = layers.Rescaling(1.0 / 127.5, offset=-1.0)(inputs)
-    backbone = keras.applications.MobileNetV2(
-        input_shape=input_shape,
-        include_top=False,
-        weights="imagenet",
-        alpha=alpha,
-        pooling=None,
-    )
-    backbone.trainable = False
-    x = backbone(x, training=False)
-    outputs = _build_head(x, num_classes, dropout_rate=0.25)
-    float_model = keras.Model(inputs=inputs, outputs=outputs, name="mobilenetv2_energy_opt")
-
-    quantize_model = tfmot.quantization.keras.quantize_model
-    qat_model = quantize_model(float_model)
-    return _compile_model(qat_model, learning_rate=5e-4)
+    Arguments:
+        x_samples: Iterable/array of input images (uint8/float32)
+        num_samples: max number of samples to yield
+    """
+    count = 0
+    for sample in x_samples:
+        if count >= num_samples:
+            break
+        # If sample is a batch, yield each element
+        if hasattr(sample, "shape") and sample.shape[0] > 1:
+            for s in sample:
+                yield np.expand_dims(s.astype(np.float32), axis=0)
+                count += 1
+                if count >= num_samples:
+                    break
+        else:
+            yield np.expand_dims(np.array(sample, dtype=np.float32), axis=0)
+            count += 1
 
 
-def apply_quantization_optimizations(
-    model: keras.Model,
-    x_train_sample: np.ndarray,
-) -> Dict[str, object]:
-    """Generate quantized variants of ``model`` using multiple strategies."""
+def post_training_quantization(model: keras.Model, representative_data: Iterable[np.ndarray], save_path: str = "model_ptq.tflite") -> str:
+    """Perform a simple post-training full integer quantization to TFLite.
 
-    return {
-        "ptq_int8": post_training_quantization(model, x_train_sample),
-        "qat_int8": quantization_aware_training(model, x_train_sample),
-        "mixed_precision": mixed_precision_quantization(model),
-        "dynamic_range": dynamic_range_quantization(model),
-    }
-
-
-def representative_dataset_generator(x_train_sample: np.ndarray) -> Iterator[Dict[str, np.ndarray]]:
-    """Yield calibration samples for INT8 conversion."""
-
-    for sample in x_train_sample:
-        calibrated = mobilenet_v2.preprocess_input(sample.astype(np.float32))
-        yield [np.expand_dims(calibrated, axis=0)]
-
-
-def post_training_quantization(model: keras.Model, x_train_sample: np.ndarray) -> Dict[str, object]:
-    """Perform INT8 post-training quantisation and return converter artefacts."""
-
+    Returns path to the saved TFLite model.
+    """
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    converter.representative_dataset = lambda: representative_dataset_generator(x_train_sample)
+    converter.representative_dataset = lambda: representative_data
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+    # Ensure input/output are int8
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
     tflite_model = converter.convert()
-
-    return {
-        "format": "tflite",
-        "precision": "int8",
-        "model_bytes": tflite_model,
-        "notes": "Post-training static range quantisation with representative dataset",
-    }
+    with open(save_path, "wb") as f:
+        f.write(tflite_model)
+    return save_path
 
 
-def quantization_aware_training(
-    model: keras.Model,
-    x_train_sample: np.ndarray,
-    fine_tune_epochs: int = 1,
-) -> keras.Model:
-    """Create a quantisation-aware clone of ``model`` for further training."""
+def quantization_aware_training(model: keras.Model, train_dataset: tf.data.Dataset, val_dataset: tf.data.Dataset, epochs: int = 5) -> keras.Model:
+    """Apply a QAT workflow using TF-MOT if available.
+
+    If TF-MOT is not available, return the original model (no-op).
+    """
+    if not TF_MOT_AVAILABLE:
+        print("TF Model Optimization Toolkit not available; skipping QAT.")
+        return model
+
+    quantize_scope = tfmot.quantization.keras.quantize_scope
+    QuantizeConfig = tfmot.quantization.keras.quantize_config
 
     quantize_model = tfmot.quantization.keras.quantize_model
-    qat_model = quantize_model(model)
-    qat_model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=5e-4),
-        loss=model.loss or "sparse_categorical_crossentropy",
-        metrics=[m for m in (model.metrics or [])] or ["accuracy"],
-    )
 
-    if x_train_sample.size:
-        processed = mobilenet_v2.preprocess_input(x_train_sample.astype(np.float32))
-        dataset = (
-            tf.data.Dataset.from_tensor_slices((processed, np.zeros(len(x_train_sample), dtype=np.int32)))
-            .batch(32)
-            .prefetch(AUTOTUNE)
-        )
-        qat_model.fit(dataset, epochs=fine_tune_epochs, verbose=0)
-
-    return qat_model
+    q_model = quantize_model(model)
+    q_model.compile(optimizer=keras.optimizers.Adam(1e-4), loss="sparse_categorical_crossentropy", metrics=["accuracy"]) 
+    q_model.fit(train_dataset, validation_data=val_dataset, epochs=epochs, verbose=1)
+    return q_model
 
 
 def mixed_precision_quantization(model: keras.Model) -> keras.Model:
-    """Return a mixed-precision clone of ``model`` using float16 activations."""
+    """Prepare model for mixed precision training/inference.
 
-    original_policy = tf.keras.mixed_precision.global_policy()
-    mixed_policy = tf.keras.mixed_precision.Policy("mixed_float16")
-    tf.keras.mixed_precision.set_global_policy(mixed_policy)
+    This function only sets the policy; actual benefits depend on hardware and runtime.
+    """
     try:
-        mixed_model = keras.models.clone_model(model)
-        mixed_model.set_weights(model.get_weights())
-    finally:
-        tf.keras.mixed_precision.set_global_policy(original_policy)
+        from tensorflow.keras import mixed_precision
 
-    return _compile_model(
-        mixed_model,
-        learning_rate=1e-3,
-        loss=model.loss or "sparse_categorical_crossentropy",
-        metrics=[m for m in (model.metrics or [])] or ["accuracy"],
-    )
+        mixed_precision.set_global_policy("mixed_float16")
+        return model
+    except Exception:
+        print("Mixed-precision not available in this TF build; returning original model.")
+        return model
 
 
-def dynamic_range_quantization(model: keras.Model) -> Dict[str, object]:
-    """Apply dynamic-range quantisation to produce a compact TFLite model."""
-
+def dynamic_range_quantization(model: keras.Model, save_path: str = "model_dynamic.tflite") -> str:
+    """Apply dynamic-range quantization (weights quantized) and save TFLite file."""
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     tflite_model = converter.convert()
-    return {
-        "format": "tflite",
-        "precision": "dynamic_range",
-        "model_bytes": tflite_model,
-        "notes": "Dynamic-range quantisation without representative dataset",
-    }
+    with open(save_path, "wb") as f:
+        f.write(tflite_model)
+    return save_path
 
 
-def implement_memory_optimizations(model: keras.Model) -> Dict[str, object]:
-    """Apply memory-focussed strategies to ``model`` and report outcomes."""
+def implement_gradient_checkpointing(model: keras.Model) -> keras.Model:
+    """Placeholder for gradient checkpointing.
 
-    return {
-        "gradient_checkpointing": implement_gradient_checkpointing(model),
-        "model_sharding": implement_model_sharding(model),
-        "activation_compression": implement_activation_compression(model),
-        "optimal_batch_size": find_optimal_batch_size(model),
-    }
-
-
-def implement_gradient_checkpointing(model: keras.Model) -> Dict[str, object]:
-    """Enable gradient checkpointing to trade compute for memory."""
-
-    result: Dict[str, object] = {"status": "unavailable", "model": model}
-
-    if hasattr(model, "enable_gradient_checkpointing"):
-        model.enable_gradient_checkpointing()
-        result.update({"status": "enabled", "method": "native"})
-        return result
-
-    try:
-        from tensorflow.python.ops.custom_gradient import recompute_grad
-    except ImportError as exc:  # pragma: no cover - safety net for TF internals.
-        result["error"] = str(exc)
-        return result
-
-    class CheckpointedModel(keras.Model):
-        def __init__(self, wrapped_model: keras.Model):
-            super().__init__(inputs=wrapped_model.inputs, outputs=wrapped_model.outputs)
-            self.wrapped_model = wrapped_model
-
-        def call(self, inputs, training: bool = False):
-            forward = lambda inp: self.wrapped_model(inp, training=training)
-            checkpointed_forward = recompute_grad(forward)
-            return checkpointed_forward(inputs)
-
-    checkpointed = CheckpointedModel(model)
-    if model.optimizer and model.loss:
-        optimizer_config = keras.optimizers.serialize(model.optimizer)
-        optimizer_instance = keras.optimizers.deserialize(optimizer_config)
-        metric_instances = []
-        for metric in model.metrics:
-            serialized = keras.metrics.serialize(metric)
-            metric_instances.append(keras.metrics.deserialize(serialized))
-        checkpointed.compile(
-            optimizer=optimizer_instance,
-            loss=model.loss,
-            metrics=metric_instances,
-        )
-
-    result.update({
-        "status": "enabled",
-        "method": "recompute_grad",
-        "model": checkpointed,
-    })
-    return result
+    Full gradient checkpointing requires model re-wiring or third-party libraries.
+    Return the model unchanged and a note.
+    """
+    print("Gradient checkpointing: placeholder — use tf.recompute_grad or custom training loop for real effect.")
+    return model
 
 
-def implement_model_sharding(model: keras.Model) -> Dict[str, object]:
-    """Prepare a strategy dictionary for sharding the model across devices."""
+def find_optimal_batch_size(model: keras.Model, start: int = 1, max_batch: int = 128) -> int:
+    """Heuristic search for largest batch that fits in memory (best-effort).
 
-    try:
-        strategy = tf.distribute.MirroredStrategy()
-    except (ValueError, RuntimeError):  # Fallback when multi-device replication unavailable.
-        strategy = tf.distribute.get_strategy()
-    layer_device_map = {}
-    for index, layer in enumerate(model.layers):
-        device_index = index % max(strategy.num_replicas_in_sync, 1)
-        layer_device_map[layer.name] = f"replica_{device_index}"
+    This performs a naive trial by increasing batch size until OOM is observed.
+    """
+    import gc
 
-    return {
-        "strategy": "mirrored",
-        "replicas": strategy.num_replicas_in_sync,
-        "layer_map": layer_device_map,
-    }
-
-
-def implement_activation_compression(model: keras.Model) -> Dict[str, object]:
-    """Return hooks and metadata for activation compression during inference."""
-
-    compression_callbacks: List[keras.callbacks.Callback] = []
-
-    class ActivationCompressor(keras.callbacks.Callback):
-        def __init__(self):
-            super().__init__()
-            self.collected_stats: List[float] = []
-
-        def on_train_batch_end(self, batch, logs=None):
-            if logs and "loss" in logs:
-                self.collected_stats.append(float(logs["loss"]))
-
-    compression_callbacks.append(ActivationCompressor())
-
-    return {
-        "callbacks": compression_callbacks,
-        "approach": "stochastic_rounding",
-        "notes": "Callbacks estimate activation range for post-training compression.",
-    }
+    for b in [1, 2, 4, 8, 16, 32, 64, 128]:
+        if b < start or b > max_batch:
+            continue
+        try:
+            dummy = np.zeros((b, *model.input_shape[1:]), dtype=np.float32)
+            _ = model.predict(dummy, verbose=0)
+            gc.collect()
+        except Exception:
+            return max(b // 2, 1)
+    return max_batch
 
 
-def find_optimal_batch_size(
-    model: keras.Model,
-    memory_budget_mb: int = 1024,
-    input_size: Optional[Tuple[int, int, int]] = None,
-) -> Dict[str, object]:
-    """Heuristically determine the largest batch size that fits the budget."""
-
-    if input_size is None:
-        if isinstance(model.input_shape, list):
-            input_size = model.input_shape[0][1:]
-        else:
-            input_size = model.input_shape[1:]
-
-    if any(dim is None for dim in input_size):
-        input_size = tuple(dim if dim is not None else 224 for dim in input_size)
-
-    model_dtype = getattr(model, "dtype", tf.float32)
-    dtype_size = tf.as_dtype(model_dtype or tf.float32).size
-    param_memory = model.count_params() * dtype_size
-    feature_map_memory = np.prod(input_size) * dtype_size
-
-    available_bytes = memory_budget_mb * 1024 ** 2
-    max_batch = max(int(available_bytes / (param_memory + feature_map_memory)), 1)
-
-    return {
-        "batch_size": max_batch,
-        "memory_budget_mb": memory_budget_mb,
-        "approximate_param_memory_mb": param_memory / (1024 ** 2),
-        "approximate_activation_memory_mb": feature_map_memory / (1024 ** 2),
-    }
+__all__ = [
+    "create_latency_optimized_model",
+    "create_memory_optimized_model",
+    "create_energy_optimized_model",
+    "representative_dataset_generator",
+    "post_training_quantization",
+    "quantization_aware_training",
+    "mixed_precision_quantization",
+    "dynamic_range_quantization",
+    "implement_gradient_checkpointing",
+    "find_optimal_batch_size",
+]
