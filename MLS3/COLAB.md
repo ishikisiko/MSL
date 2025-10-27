@@ -90,7 +90,7 @@ drive.mount('/content/drive')
 
 **症状**: `ERROR: pip's dependency resolver...` 或 `ValueError: numpy.dtype size changed...`
 
-**原因**: Colab 默认镜像会预装 TensorFlow 2.19 与 NumPy 2.x。本项目固定使用 `tensorflow==2.15.1`、`numpy==1.25.2` 和 `tensorflow-model-optimization==0.8.0` 这一组合，确保量化与推理代码兼容。
+**原因**: Colab 默认镜像会预装 TensorFlow 2.19 与 NumPy 2.x。本项目固定使用 `tensorflow==2.15.1`、`numpy==1.26.4` 和 `tensorflow-model-optimization==0.8.0` 这一组合，确保量化与推理代码兼容，同时兼容新版 Colab 的 Python 3.12。
 
 **解决**: 按照 `requirements.txt` 重新同步依赖。
 

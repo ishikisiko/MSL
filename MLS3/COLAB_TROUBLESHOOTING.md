@@ -18,7 +18,7 @@ Detected distribution requires numpy<1.26 and you have numpy 2.1.0
 Colab 近期镜像通常预装 `tensorflow==2.19.x` 与 `numpy>=2.0`。本项目在以下组合下验证通过：
 - `tensorflow==2.15.1`
 - `tensorflow-model-optimization==0.8.0`
-- `numpy==1.25.2`
+- `numpy==1.26.4`
 
 任意一个包被升级都会触发 ABI 不兼容或量化工具报错。
 
@@ -61,7 +61,7 @@ print("✓ 所有依赖就绪")
 如果只想快速验证：
 
 ```python
-!python -m pip install --quiet "numpy==1.25.2"
+!python -m pip install --quiet "numpy==1.26.4"
 import part1_baseline_model
 print("✓ NumPy 重置完成，可继续运行项目")
 ```

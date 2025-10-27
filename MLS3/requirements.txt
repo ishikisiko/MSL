@@ -1,5 +1,5 @@
 ## Core runtime
-numpy==1.25.2
+numpy==1.26.4
 psutil>=5.9.0
 tensorflow==2.15.1
 tensorflow-model-optimization==0.8.0

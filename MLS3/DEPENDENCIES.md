@@ -6,7 +6,7 @@ summarises the scope and rationale for each entry.
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| `numpy` | 1.25.2 | Matches TensorFlow 2.15 wheels and keeps TFLite converters stable. |
+| `numpy` | 1.26.4 | Matches TensorFlow 2.15 wheels on Python 3.12 and keeps TFLite converters stable. |
 | `tensorflow` | 2.15.1 | Provides `tf.keras` APIs, TFLite converter, and profiling utilities used throughout `part1`–`part3`. |
 | `tensorflow-model-optimization` | 0.8.0 | Supplies post-training and quantization-aware tooling leveraged in `part2_optimizations.py`. |
 | `psutil` | ≥5.9 | Required by `performance_profiler.py` for memory telemetry. |
