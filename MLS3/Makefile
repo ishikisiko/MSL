@@ -1,14 +1,13 @@
 # Hardware-Aware Design Assignment Makefile
 # Supports both Track A (real hardware) and Track B (simulation)
 
-.PHONY: help clean install train test benchmark deploy simulate analyze
+.PHONY: help clean train test benchmark deploy simulate analyze
 
 # Default target
 help:
 	@echo "Hardware-Aware Design Assignment Build System"
 	@echo ""
 	@echo "Available targets:"
-	@echo "  install     - Install Python dependencies"
 	@echo "  train       - Train baseline model"
 	@echo "  optimize    - Run hardware-aware optimizations"
 	@echo "  benchmark   - Benchmark all models"
@@ -18,7 +17,6 @@ help:
 	@echo "  clean       - Clean generated files"
 	@echo ""
 	@echo "Usage examples:"
-	@echo "  make install"
 	@echo "  make train"
 	@echo "  make PLATFORM=cpu_x86 deploy"
 	@echo "  make SIMULATOR=qemu simulate"
@@ -31,11 +29,6 @@ PART3_A := part3_deployment.py
 PART3_B := part3_modeling.py
 PROFILER := performance_profiler.py
 FRAMEWORK := optimization_framework.py
-
-# Installation
-install:
-	$(PYTHON) -m pip install -r requirements.txt
-	@echo "Dependencies installed successfully"
 
 # Training
 train:
@@ -113,15 +106,15 @@ clean:
 	@echo "Generated files cleaned"
 
 # Full pipeline (Track A)
-pipeline-a: setup install train optimize benchmark deploy analyze
+pipeline-a: setup train optimize benchmark deploy analyze
 	@echo "Track A pipeline completed successfully"
 
 # Full pipeline (Track B)
-pipeline-b: setup install train optimize benchmark simulate analyze
+pipeline-b: setup train optimize benchmark simulate analyze
 	@echo "Track B pipeline completed successfully"
 
 # Development targets
-dev-setup: install setup
+dev-setup: setup
 	@echo "Development environment ready"
 
 # Documentation generation

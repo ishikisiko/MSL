@@ -189,7 +189,7 @@ print("✓ 模块导入成功")
 - 使用 Drive 方法进行长时间运行
 
 ### ❌ 避免做法
-- 不要运行 `pip install -r requirements.txt`（会触发大量冲突）
+- 不要跳过依赖安装（请使用新的 `requirements.txt`）
 - 不要忽视 NumPy 版本限制
 - 不要在 CPU 模式下训练（太慢）
 

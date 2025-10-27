@@ -75,10 +75,11 @@ cd MLS3
 
 2. Install dependencies:
 ```bash
-make install
-# or manually:
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
+
+	See `DEPENDENCIES.md` for a breakdown of the packages and compatibility notes.
 
 3. Set up directory structure:
 ```bash
@@ -228,7 +229,7 @@ This project is part of academic coursework and follows educational use guidelin
 
 For issues related to:
 
-- **Setup and installation**: Check the Makefile targets and requirements.txt
+- **Setup and installation**: Install packages from `requirements.txt`
 - **Platform-specific deployment**: Refer to platform configuration files
 - **Simulation setup**: Consult the simulation tool documentation
 - **Performance analysis**: Review the profiler module documentation
