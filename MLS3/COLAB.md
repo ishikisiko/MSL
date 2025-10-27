@@ -11,7 +11,7 @@
 ```python
 # 一键完整运行
 !git clone https://github.com/ishikisiko/MSL.git && cd MSL/MLS3 && \
-pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization line-profiler && \
+pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler && \
 python run_optimizations.py
 ```
 
@@ -26,7 +26,7 @@ python run_optimizations.py
 ```python
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization line-profiler
+!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
 !python run_optimizations.py
 ```
 
@@ -52,7 +52,7 @@ drive.mount('/content/drive')
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-!pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization line-profiler
+!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
 !python run_optimizations.py
 ```
 
@@ -85,11 +85,11 @@ drive.mount('/content/drive')
 
 ```python
 # 只安装必需的包，避免冲突
-!pip install -q "numpy>=2.0,<2.3"  # 修复 NumPy 版本
+!pip install -q "numpy==1.23.5"  # 修复 NumPy 版本
 !pip install -q tensorflow-model-optimization line-profiler
 ```
 
-**原因**: Colab 已预装 200+ 包，重装会引发冲突
+**原因**: TensorFlow 2.12 在 Colab 上依赖 NumPy < 1.24；升级到 NumPy 2.x 会与 `tensorflow-model-optimization` 等包冲突
 
 ### 2. GPU 未检测到
 
@@ -164,7 +164,7 @@ MLS3/
 # 测试导入
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
-!pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization line-profiler
+!pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
 
 # 验证环境
 import numpy as np

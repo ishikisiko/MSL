@@ -47,8 +47,9 @@
 !git clone https://github.com/ishikisiko/MSL.git
 %cd MSL/MLS3
 
-# 安装依赖
-!pip install -q tensorflow keras numpy pandas matplotlib seaborn
+# 安装依赖（先固定 NumPy 避免冲突）
+!pip install -q "numpy==1.23.5"
+!pip install -q tensorflow keras pandas matplotlib seaborn
 !pip install -q psutil memory-profiler tensorflow-model-optimization
 !pip install -q onnx onnxruntime scikit-learn tqdm pyyaml
 

@@ -1,7 +1,8 @@
 # Core ML/DL libraries
 tensorflow>=2.12.0
 keras>=2.12.0
-numpy>=1.24.0
+# TensorFlow 2.12 wheels require NumPy < 1.24; keep within tested range
+numpy>=1.22.0,<1.24.0
 
 # Data processing and visualization
 pandas>=2.0.0

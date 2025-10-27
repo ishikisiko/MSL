@@ -11,17 +11,17 @@ Expected 96 from C header, got 88 from PyObject
 或者：
 ```
 ERROR: pip's dependency resolver does not currently take into account all the packages...
-opencv-python requires numpy>=2.0, but you have numpy 1.26.4
+tensorflow-model-optimization requires numpy<1.24,>=1.18.5 and you have numpy 2.0.0
 ```
 
 ### 原因分析
 Colab 环境（2025年10月）中的包版本冲突：
-- **NumPy 版本窗口问题**: 
-  - OpenCV/CuPy 需要: `2.0 <= numpy < 2.3`
-  - TensorFlow 2.19+ 会自动安装最新的 NumPy (可能是 2.3.4)
-  - 但其他预装包还没适配 NumPy 2.3
+- **NumPy 版本窗口问题**
+    - TensorFlow 2.12/2.13 wheels 仅兼容 `numpy < 1.24`
+    - Colab 新版镜像预装了 `numpy 2.x`
+    - `tensorflow-model-optimization` 同样要求 `numpy < 1.24`
 
-**核心策略**: Colab 已预装大部分包，**只安装必需的包**，避免触发大规模依赖解析。
+**核心策略**: 保持 NumPy 在 1.23.x，**只安装缺失包**，避免触发大规模降级/升级。
 
 ### 解决方案
 
@@ -30,13 +30,9 @@ Colab 环境（2025年10月）中的包版本冲突：
 在 Colab 新单元格中运行：
 
 ```python
-# 只修复 NumPy 版本，不重装其他包
-!pip install -q "numpy>=2.0,<2.3"
-
-# 只安装 Colab 没有的包
+!pip install -q "numpy==1.23.5"
 !pip install -q tensorflow-model-optimization line-profiler
 
-# 验证
 import numpy as np
 import tensorflow as tf
 print(f"✓ NumPy: {np.__version__}")
@@ -44,52 +40,42 @@ print(f"✓ TensorFlow: {tf.__version__}")
 print("✓ 所有依赖就绪")
 ```
 
-#### 方案 B: 如果方案 A 仍有问题
+#### 方案 B: 虚拟环境隔离
 
-创建独立虚拟环境（避免与 Colab 预装包冲突）：
+如果你需要完全隔离环境：
 
 ```python
-# 注意：这会断开当前会话
 !pip install virtualenv
 !virtualenv myenv --system-site-packages
-!source myenv/bin/activate && pip install -q "numpy>=2.0,<2.3" tensorflow-model-optimization
+!source myenv/bin/activate && pip install -q "numpy==1.23.5" tensorflow-model-optimization line-profiler
 
-# 然后在所有后续单元格前运行
+# 后续单元格开头记得激活环境
 !source myenv/bin/activate
 ```
 
-#### 方案 C: 忽略警告继续运行
+#### 方案 C: 仅修复 NumPy 再继续
 
-如果只是警告但不影响项目代码：
+如果只想快速验证：
 
 ```python
-# 直接安装项目需要的包
-!pip install -q tensorflow-model-optimization line-profiler
-
-# 验证项目代码能否运行
+!pip install -q "numpy==1.23.5"
 import part1_baseline_model
-print("✓ 模块导入成功，警告可忽略")
+print("✓ NumPy 重置完成，可继续运行项目")
 ```
 
 ### 快速修复命令（一键运行）
 
-将以下代码复制到 Colab 新单元格：
-
 ```python
-# 🔧 最小化依赖修复（推荐）
 import subprocess
 import sys
 
 print("修复 NumPy 版本...")
-# 只修复 NumPy，不动其他包
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy>=2.0,<2.3"])
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy==1.23.5"])
 
 print("安装项目特定依赖...")
-# 只安装 Colab 缺少的包
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", 
-                "tensorflow-model-optimization", "line-profiler"])
+                                "tensorflow-model-optimization", "line-profiler"])
 
-# 验证
 import numpy as np
 import tensorflow as tf
 print(f"\n✓ NumPy: {np.__version__}")
@@ -132,7 +118,7 @@ else:
 ```
 FileNotFoundError: baseline_mobilenetv2.keras not found
 ```
-
+subprocess.run([sys.executable, "-m", "pip", "install", "-q", "numpy==1.23.5"])
 ### 解决方案
 
 #### 选项 1: 训练新模型
