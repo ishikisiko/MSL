@@ -30,11 +30,14 @@
 - **内容：** 三种方法详解、问题排查、高级技巧、可视化示例
 - **建议：** 遇到问题时查阅
 
-### 5. COLAB_SUMMARY.md 📋
-- **作用：** 综合概述和总结
-- **适合：** 需要全面了解的用户
-- **内容：** 所有方案对比、最佳实践、学习路径
-- **建议：** 了解整体架构
+### 5. COLAB_TROUBLESHOOTING.md 🔧
+- **作用：** 常见问题和故障排除指南
+- **适合：** 遇到错误的用户
+- **内容：** 
+  - 依赖版本冲突（2025-10 更新）⭐
+  - GPU 问题、内存不足、文件缺失等解决方案
+  - 快速修复命令和调试工具
+- **建议：** 遇到任何问题首先查看此文件 ⭐
 
 ---
 
@@ -56,7 +59,26 @@
   3. 等待完成
 - **推荐场景：** 首次使用、需要图形化引导
 
-### 7. generate_colab_diagrams.py 📊
+### 7. colab_numpy_fix.py 🔧
+- **作用：** 自动修复 NumPy 版本冲突
+- **类型：** Python 修复脚本
+- **功能：**
+  - 自动卸载冲突的 NumPy 版本
+  - 安装兼容版本 (1.26.4)
+  - 验证安装结果
+  - 环境状态检查
+- **使用方法：**
+  ```python
+  # 在 Colab 中运行
+  !python colab_numpy_fix.py
+  
+  # 或者导入使用
+  import colab_numpy_fix
+  colab_numpy_fix.fix_numpy()
+  ```
+- **推荐场景：** 遇到依赖冲突错误时运行（已更新至 2025-10）⭐
+
+### 8. generate_colab_diagrams.py 📊
 - **作用：** 生成可视化图表
 - **类型：** Python 脚本
 - **功能：**
@@ -73,7 +95,7 @@
   - `colab_time_estimates.png` - 时间和文件大小估算
 - **推荐场景：** 需要可视化展示、制作报告
 
-### 8. .gitignore
+### 9. .gitignore
 - **作用：** Git 忽略文件配置
 - **功能：**
   - 忽略临时文件
@@ -92,12 +114,13 @@ COLAB_README.md (入口)
     ├─→ COLAB_INDEX.md (索引) ──→ 所有文档
     ├─→ COLAB_QUICKSTART.md (快速) ──→ 快速命令
     ├─→ COLAB_SETUP.md (详细) ──→ 完整指南
-    └─→ COLAB_SUMMARY.md (总结) ──→ 方案对比
+    └─→ COLAB_TROUBLESHOOTING.md (故障排除) ──→ 问题解决 ⭐
 
 colab_setup.ipynb (实践)
     └─→ 自动从 GitHub 克隆项目
 
 工具脚本
+    ├─→ colab_numpy_fix.py (修复冲突) ⭐
     ├─→ generate_colab_diagrams.py (可视化)
     └─→ quick_test.py (测试)
 ```
@@ -112,6 +135,7 @@ colab_setup.ipynb (实践)
 1. COLAB_README.md (了解概况)
 2. COLAB_QUICKSTART.md (快速上手)
 3. colab_setup.ipynb (实际操作)
+4. 如遇问题 → COLAB_TROUBLESHOOTING.md
 ```
 
 ### 场景 2: 时间紧急
@@ -120,22 +144,24 @@ colab_setup.ipynb (实践)
 1. COLAB_QUICKSTART.md (找到一键命令)
 2. 复制粘贴到 Colab
 3. 运行
+4. 如遇错误 → colab_numpy_fix.py
 ```
 
-### 场景 3: 需要深入了解
+### 场景 3: 遇到错误 ⭐
+**推荐路径：**
+```
+1. 立即查看 COLAB_TROUBLESHOOTING.md
+2. 找到对应的问题编号
+3. 按照解决方案操作
+4. NumPy 冲突 → 运行 colab_numpy_fix.py
+```
+
+### 场景 4: 需要深入了解
 **推荐路径：**
 ```
 1. COLAB_INDEX.md (了解结构)
 2. COLAB_SETUP.md (详细学习)
-3. COLAB_SUMMARY.md (总结回顾)
-```
-
-### 场景 4: 遇到问题
-**推荐路径：**
-```
-1. COLAB_QUICKSTART.md → 常见问题
-2. COLAB_SETUP.md → 问题排查
-3. COLAB_INDEX.md → 问题索引
+3. 实践应用
 ```
 
 ---
@@ -148,11 +174,12 @@ colab_setup.ipynb (实践)
 | COLAB_INDEX.md | ~15 KB | Markdown |
 | COLAB_QUICKSTART.md | ~10 KB | Markdown |
 | COLAB_SETUP.md | ~20 KB | Markdown |
-| COLAB_SUMMARY.md | ~20 KB | Markdown |
-| colab_setup.ipynb | ~40 KB | Jupyter Notebook |
+| COLAB_TROUBLESHOOTING.md | ~15 KB | Markdown ⭐ |
+| colab_setup.ipynb | ~45 KB | Jupyter Notebook |
+| colab_numpy_fix.py | ~5 KB | Python 修复脚本 ⭐ |
 | generate_colab_diagrams.py | ~10 KB | Python 脚本 |
 | .gitignore | ~2 KB | 配置文件 |
-| **总计** | **~122 KB** | |
+| **总计** | **~127 KB** | **9 个文件** |
 
 ---
 
@@ -168,13 +195,11 @@ colab_setup.ipynb (实践)
 1. **COLAB_INDEX.md** - 快速浏览
 2. **COLAB_SETUP.md** - 选择方法
 3. **直接运行** - 实践
-4. **COLAB_SUMMARY.md** - 了解最佳实践
 
 ### 高级用户
 1. **COLAB_QUICKSTART.md** - 一键命令
 2. **直接使用 GitHub** - 自动化
-3. **COLAB_SETUP.md** - 高级技巧
-4. **自定义修改** - 实验
+3. **自定义修改** - 实验
 
 ---
 
@@ -184,6 +209,8 @@ colab_setup.ipynb (实践)
 - [x] 快速开始指南
 - [x] 详细设置步骤
 - [x] 三种运行方法（GitHub/Notebook/Drive）
+- [x] 故障排除指南 ⭐
+- [x] NumPy 冲突解决方案 ⭐
 - [x] 问题排查
 - [x] 高级技巧
 - [x] 可视化示例
@@ -192,6 +219,7 @@ colab_setup.ipynb (实践)
 
 ### 工具支持
 - [x] 交互式 Notebook
+- [x] NumPy 冲突自动修复 ⭐
 - [x] 可视化图表生成
 - [x] 快速测试脚本
 - [x] Git 配置

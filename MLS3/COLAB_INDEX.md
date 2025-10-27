@@ -9,9 +9,9 @@
 | 我想... | 使用这个文件 | 类型 |
 |---------|-------------|------|
 | **立即开始运行** | [COLAB_QUICKSTART.md](COLAB_QUICKSTART.md) | 快速指南 |
+| **解决常见问题** | [COLAB_TROUBLESHOOTING.md](COLAB_TROUBLESHOOTING.md) | 故障排除 ⭐ |
 | **详细了解所有方法** | [COLAB_SETUP.md](COLAB_SETUP.md) | 完整文档 |
 | **使用图形化界面** | [colab_setup.ipynb](colab_setup.ipynb) | Jupyter Notebook |
-| **查看总结** | [COLAB_SUMMARY.md](COLAB_SUMMARY.md) | 综合概述 |
 
 ---
 
@@ -79,21 +79,23 @@
 **估计运行时间：** 1-2 小时
 
 ---
-**适合：需要全面了解的用户**
+
+### 4. COLAB_TROUBLESHOOTING.md 🔧
+**适合：遇到任何错误的用户**
 
 内容：
-- ✅ 所有方案总结
-- ✅ 文件结构说明
-- ✅ 最佳实践
-- ✅ 学习路径
+- ✅ 6 大类常见问题解决方案
+- ✅ 依赖版本冲突（2025-10 更新）
+- ✅ GPU/内存/文件问题
+- ✅ 环境调试工具
+- ✅ 快速修复命令
 
 **推荐场景：**
-- 第一次接触项目
-- 需要选择最佳方案
-- 想了解整体架构
-- 作为参考文档
+- 遇到任何错误立即查看 ⭐
+- 依赖安装失败
+- 运行时问题排查
 
-**估计阅读时间：** 10 分钟
+**估计阅读时间：** 10 分钟（按需查询）
 
 ---
 
@@ -215,13 +217,14 @@ MLS3/
 
 | 问题 | 查看文档 | 章节 |
 |------|---------|------|
-| GPU 未启用 | COLAB_QUICKSTART.md | 常见问题 Q2 |
-| 模块导入失败 | COLAB_SETUP.md | 问题排查 #1 |
-| 内存不足 | COLAB_SETUP.md | 问题排查 #3 |
-| 会话超时 | COLAB_SETUP.md | 问题排查 #4 |
-| 基线模型缺失 | COLAB_QUICKSTART.md | 常见问题 Q5 |
+| **依赖版本冲突** | COLAB_TROUBLESHOOTING.md | 问题 1 ⭐ |
+| **TensorFlow 版本** | COLAB_TROUBLESHOOTING.md | 问题 1 |
+| **内存不足 OOM** | COLAB_TROUBLESHOOTING.md | 问题 4 |
+| **运行时断开** | COLAB_TROUBLESHOOTING.md | 问题 5 |
+| GPU 未启用 | COLAB_TROUBLESHOOTING.md | 问题 2 |
+| 模块导入失败 | COLAB_TROUBLESHOOTING.md | 问题 6 |
+| 基线模型缺失 | COLAB_TROUBLESHOOTING.md | 问题 3 |
 | 如何保存结果 | COLAB_SETUP.md | 方法三 |
-| 如何继续运行 | COLAB_SUMMARY.md | Q5 |
 
 ---
 

@@ -56,7 +56,7 @@ drive.mount('/content/drive')
 | **[COLAB_INDEX.md](COLAB_INDEX.md)** | 📑 所有资源索引 | 所有人 |
 | **[COLAB_QUICKSTART.md](COLAB_QUICKSTART.md)** | ⚡ 快速开始 | 赶时间 |
 | **[COLAB_SETUP.md](COLAB_SETUP.md)** | 📖 详细指南 | 深入学习 |
-| **[COLAB_SUMMARY.md](COLAB_SUMMARY.md)** | 📋 方案总结 | 需要概览 |
+| **[COLAB_TROUBLESHOOTING.md](COLAB_TROUBLESHOOTING.md)** | � 故障排除 | 遇到问题 ⭐ |
 | **[colab_setup.ipynb](colab_setup.ipynb)** | 📔 交互式 Notebook | 喜欢图形化 |
 
 ---
@@ -73,9 +73,9 @@ COLAB_QUICKSTART.md → 复制代码 → 运行 → 完成
 COLAB_SETUP.md → colab_setup.ipynb → 实践 → 掌握
 ```
 
-### 🎓 完整路径（深入理解）
+### 🔧 问题排查路径
 ```
-COLAB_INDEX.md → COLAB_SUMMARY.md → COLAB_SETUP.md → 高级应用
+遇到错误 → COLAB_TROUBLESHOOTING.md → 快速解决 ⭐
 ```
 
 ---
@@ -171,10 +171,11 @@ python quick_test.py
 
 ## 📞 需要帮助？
 
-1. **📑 查看索引** → [COLAB_INDEX.md](COLAB_INDEX.md)
-2. **⚡ 快速指南** → [COLAB_QUICKSTART.md](COLAB_QUICKSTART.md)  
-3. **📖 详细文档** → [COLAB_SETUP.md](COLAB_SETUP.md)
-4. **🐛 运行测试** → `!python quick_test.py`
+1. **� 故障排除** → [COLAB_TROUBLESHOOTING.md](COLAB_TROUBLESHOOTING.md) ⭐ **解决 NumPy 冲突等常见问题**
+2. **�📑 查看索引** → [COLAB_INDEX.md](COLAB_INDEX.md)
+3. **⚡ 快速指南** → [COLAB_QUICKSTART.md](COLAB_QUICKSTART.md)  
+4. **📖 详细文档** → [COLAB_SETUP.md](COLAB_SETUP.md)
+5. **🐛 运行测试** → `!python quick_test.py`
 
 ---
 
