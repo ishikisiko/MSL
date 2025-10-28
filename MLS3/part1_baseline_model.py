@@ -81,41 +81,24 @@ def _build_data_augmentation() -> keras.Sequential:
 
 
 def create_baseline_model(
-    native_shape: Tuple[int, int, int] = NATIVE_INPUT_SHAPE,
-    target_shape: Tuple[int, int, int] = TARGET_INPUT_SHAPE,
+    input_shape: Tuple[int, int, int] = TARGET_INPUT_SHAPE,
     num_classes: int = NUM_CLASSES,
 ) -> keras.Model:
     """
     创建一个基于 MobileNetV2 的分类器。
     
-    模型内部将 (32, 32, 3) 的输入上采样到 (96, 96, 3)
-    以正确利用 ImageNet 预训练权重。
+    模型现在直接接收 (96, 96, 3) 的输入，预处理已在数据管道中完成。
     """
 
-    inputs = keras.Input(shape=native_shape, name="input_image")
+    inputs = keras.Input(shape=input_shape, name="input_image")
     
-    # 1. 上采样层 (关键修复)
-    # 将 32x32 图像放大到 96x96
-    upsample_factor = target_shape[0] // native_shape[0]
-    if upsample_factor <= 1:
-        x = inputs
-    else:
-        x = layers.UpSampling2D(
-            size=(upsample_factor, upsample_factor),
-            interpolation='bilinear',
-            name="upsample_to_96x96"
-        )(inputs)
+    # 预处理和数据增强已移至 tf.data 管道
+    # x = layers.Rescaling(1.0 / 127.5, offset=-1.0, name="rescale_inputs")(inputs)
 
-    # 2. 数据增强层 (现在在 96x96 上操作)
-    x = _build_data_augmentation()(x)
-    
-    # 3. 预处理层 (归一化到 [-1, 1])
-    x = layers.Rescaling(1.0 / 127.5, offset=-1.0, name="rescale_inputs")(x)
-
-    # 4. Backbone (主干网络)
+    # Backbone (主干网络)
     # 关键修复：Backbone 必须用 TARET_SHAPE 实例化！
     backbone = keras.applications.MobileNetV2(
-        input_shape=target_shape,
+        input_shape=input_shape,
         include_top=False,
         weights="imagenet",
         pooling=None,
@@ -126,7 +109,7 @@ def create_baseline_model(
     backbone.trainable = False
 
     # 以推理模式 (training=False) 调用冻结的 backbone
-    x = backbone(x, training=False) 
+    x = backbone(inputs, training=False) 
 
     # 5. 分类头 (轻量级)
     x = layers.GlobalAveragePooling2D(name="avg_pool")(x)
@@ -141,10 +124,11 @@ def create_baseline_model(
 def load_and_preprocess_data(
     batch_size: int = BATCH_SIZE,
     validation_split: float = VALIDATION_SPLIT,
+    target_shape: Tuple[int, int, int] = TARGET_INPUT_SHAPE,
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
     """
-    加载 CIFAR-10。
-    (此函数无需更改，它继续提供原生的 32x32 图像)
+    加载 CIFAR-10 并应用预处理。
+    - 上采样、数据增强和归一化现在都在 tf.data 管道中完成。
     """
 
     (x_train, y_train), (x_test, y_test) = keras.datasets.cifar10.load_data()
@@ -165,17 +149,36 @@ def load_and_preprocess_data(
     print(f"验证样本数: {len(x_val)}")
     print(f"测试样本数: {len(x_test)}")
 
-    def _prepare_dataset(images: np.ndarray, labels: np.ndarray, shuffle: bool) -> tf.data.Dataset:
+    # 数据增强层现在用于 tf.data.Dataset.map()
+    data_augmentation = _build_data_augmentation()
+    upsample_factor = target_shape[0] // NATIVE_INPUT_SHAPE[0]
+
+    def _prepare_dataset(images: np.ndarray, labels: np.ndarray, shuffle: bool, augment: bool) -> tf.data.Dataset:
         ds = tf.data.Dataset.from_tensor_slices((images, labels))
         if shuffle:
             ds = ds.shuffle(buffer_size=len(images), reshuffle_each_iteration=True)
-        ds = ds.map(lambda img, lbl: (img, tf.squeeze(lbl, axis=-1)), num_parallel_calls=AUTOTUNE)
+        
+        # 将所有预处理操作移到这里
+        def _preprocess(img, lbl):
+            img = tf.cast(img, tf.float32)
+            # 1. 上采样
+            if upsample_factor > 1:
+                img = tf.image.resize(img, (target_shape[0], target_shape[1]), method='bilinear')
+            # 2. 数据增强 (仅用于训练集)
+            if augment:
+                img = data_augmentation(img, training=True)
+            # 3. 归一化
+            img = tf.keras.applications.mobilenet_v2.preprocess_input(img)
+            lbl = tf.squeeze(lbl, axis=-1)
+            return img, lbl
+
+        ds = ds.map(_preprocess, num_parallel_calls=AUTOTUNE)
         ds = ds.batch(batch_size).prefetch(AUTOTUNE)
         return ds
 
-    train_ds = _prepare_dataset(x_train, y_train, shuffle=True)
-    val_ds = _prepare_dataset(x_val, y_val, shuffle=False)
-    test_ds = _prepare_dataset(x_test, y_test, shuffle=False)
+    train_ds = _prepare_dataset(x_train, y_train, shuffle=True, augment=True)
+    val_ds = _prepare_dataset(x_val, y_val, shuffle=False, augment=False)
+    test_ds = _prepare_dataset(x_test, y_test, shuffle=False, augment=False)
 
     return train_ds, val_ds, test_ds
 
