@@ -10,10 +10,23 @@ Usage:
 from __future__ import annotations
 
 import os
+# Reduce TensorFlow C++ backend verbosity before importing TF
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+
 import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+import logging
+try:
+    from absl import logging as absl_logging
+    absl_logging.set_verbosity(absl_logging.ERROR)
+except Exception:
+    pass
+try:
+    tf.get_logger().setLevel(logging.ERROR)
+except Exception:
+    pass
 
 # Import our modules
 from part1_baseline_model import load_and_preprocess_data

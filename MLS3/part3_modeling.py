@@ -2,6 +2,16 @@
 
 This module contains analytical performance models and lightweight simulation
 placeholders that help validate estimates without access to physical hardware.
+
+CLI usage (wired by Makefile `simulate` target):
+        python part3_modeling.py --simulator {qemu,renode,webgpu} \
+                [--model-path baseline_mobilenetv2.keras] \
+                [--output results/simulation_<sim>.json]
+
+Notes:
+- These are QEMU/Renode/WebGPU-style placeholders. They do NOT spin up real
+    simulators but provide consistent, reproducible proxies for design-space
+    exploration when hardware is unavailable. Integrations can be added later.
 """
 
 from __future__ import annotations
@@ -12,6 +22,17 @@ import numpy as np
 from dataclasses import dataclass
 
 from performance_profiler import calculate_model_metrics
+import json
+import os
+import argparse
+
+try:
+    # TensorFlow is required only when loading real models for metrics
+    import tensorflow as tf
+    from tensorflow import keras
+except Exception:  # pragma: no cover - allow environments without TF to import module
+    tf = None
+    keras = None
 
 
 @dataclass
@@ -112,3 +133,121 @@ __all__ = [
     "simulate_mobile_gpu_performance",
     "cross_validate_models",
 ]
+
+
+def _default_model(model_path: Optional[str] = None):
+    """Load a Keras model if available; otherwise create a tiny fallback.
+
+    This keeps the CLI usable on lightweight environments.
+    """
+    if model_path and os.path.exists(model_path) and keras is not None:
+        try:
+            return keras.models.load_model(model_path)
+        except Exception:
+            pass
+
+    # Fallback: tiny 1-layer model (only used for placeholder metrics)
+    if keras is None:
+        raise RuntimeError("TensorFlow/Keras not available to build fallback model")
+    inputs = keras.Input(shape=(224, 224, 3))
+    x = keras.layers.AveragePooling2D(pool_size=(7, 7), strides=7)(inputs)
+    x = keras.layers.Conv2D(8, 3, activation="relu")(x)
+    x = keras.layers.GlobalAveragePooling2D()(x)
+    outputs = keras.layers.Dense(10, activation="softmax")(x)
+    model = keras.Model(inputs, outputs)
+    return model
+
+
+def _platform_presets(simulator: str) -> Dict[str, Any]:
+    """Return reasonable platform spec presets for each simulator type."""
+    simulator = simulator.lower()
+    if simulator == "qemu":  # ARM Cortex-A class (Linux)
+        return {
+            "name": "QEMU-ARM-Cortex-A",
+            "peak_gflops": 40.0,
+            "memory_bandwidth_gbps": 12.0,
+            "tdp_watts": 5.0,
+            "simulation_overhead_scale": 1.3,
+            "energy_scale": 1.1,
+        }
+    if simulator == "renode":  # ARM Cortex-M class (MCU)
+        return {
+            "name": "Renode-Cortex-M",
+            "peak_gflops": 0.1,  # effectively ~100 MFLOPS class
+            "memory_bandwidth_gbps": 0.1,
+            "tdp_watts": 0.3,
+            "simulation_overhead_scale": 5.0,
+        }
+    if simulator == "webgpu":  # Mobile GPU proxy
+        return {
+            "name": "WebGPU-Mobile-Proxy",
+            "peak_gflops": 250.0,
+            "memory_bandwidth_gbps": 30.0,
+            "tdp_watts": 6.0,
+            "gpu_scale": 0.45,
+            "gpu_energy_scale": 1.0,
+        }
+    raise ValueError(f"Unsupported simulator: {simulator}")
+
+
+def _simulate(simulator: str, model, specs: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispatch to simulator-specific placeholder and return results with metadata."""
+    ppm = PlatformPerformanceModel(specs)
+    analytical = ppm.estimate_performance(model)
+    if simulator == "qemu":
+        simulated = simulate_arm_performance(model, specs)
+    elif simulator == "renode":
+        simulated = simulate_cortex_m_performance(model, specs)
+    elif simulator == "webgpu":
+        simulated = simulate_mobile_gpu_performance(model, specs)
+    else:
+        raise ValueError(simulator)
+
+    error_score = cross_validate_models(analytical, simulated)
+    return {
+        "simulator": simulator,
+        "platform": specs.get("name", simulator),
+        "analytical": analytical,
+        "simulated": simulated,
+        "cross_validation_error": float(error_score),
+    }
+
+
+def main():  # pragma: no cover - thin CLI wrapper
+    parser = argparse.ArgumentParser(description="Track B: simulation & modeling")
+    parser.add_argument(
+        "--simulator",
+        required=True,
+        choices=["qemu", "renode", "webgpu"],
+        help="Simulator placeholder to use",
+    )
+    parser.add_argument(
+        "--model-path",
+        default="baseline_mobilenetv2.keras",
+        help="Path to a Keras model file",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional output JSON path (default: results/simulation_<sim>.json)",
+    )
+    args = parser.parse_args()
+
+    # Ensure results directory exists
+    results_dir = os.path.join(os.path.dirname(__file__), "results")
+    os.makedirs(results_dir, exist_ok=True)
+    out_path = args.output or os.path.join(results_dir, f"simulation_{args.simulator}.json")
+
+    # Load model (or fallback) and run simulation
+    model = _default_model(args.model_path)
+    specs = _platform_presets(args.simulator)
+    result = _simulate(args.simulator, model, specs)
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2)
+
+    print(f"Saved simulation results → {out_path}")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()

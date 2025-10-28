@@ -14,6 +14,8 @@ REFACTORED (V4):
 from __future__ import annotations
 
 import os
+import argparse
+from pathlib import Path
 import time
 from typing import Dict, Iterable, Tuple
 
@@ -238,14 +240,48 @@ def benchmark_baseline_model(
 # --- 主要训练流程 ---
 
 if __name__ == "__main__":
+    # CLI 选项：支持仅评估模式，直接加载已保存模型并输出完整指标
+    parser = argparse.ArgumentParser(description="Baseline MobileNetV2 training/evaluation")
+    parser.add_argument("--eval-only", action="store_true", help="仅评估：跳过训练，直接加载模型并评估")
+    parser.add_argument("--model-path", type=str, default="baseline_mobilenetv2.keras", help="评估/保存的模型路径")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE, help="训练/评估的 batch size")
+    args = parser.parse_args()
+
     print_device_info()
     
     device_name = '/GPU:0' if gpus else '/CPU:0'
     with tf.device(device_name):
         print("正在加载和准备数据集 (32x32)...")
         train_ds, val_ds, test_ds = load_and_preprocess_data(
-            batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT
+            batch_size=args.batch_size, validation_split=VALIDATION_SPLIT
         )
+
+        # 仅评估路径：如果提供 --eval-only 并且模型文件存在，则直接加载并基准测试
+        if args.eval_only:
+            model_file = Path(args.model_path)
+            if not model_file.exists():
+                print(f"\n[eval-only] 指定的模型文件不存在: {model_file.resolve()}\n将继续执行训练流程…")
+            else:
+                print(f"\n=== Eval-only: 从 '{model_file}' 加载模型并在测试集上评估 ===")
+                model = keras.models.load_model(str(model_file))
+                metrics = benchmark_baseline_model(model, test_ds, batch_size=args.batch_size)
+
+                print("\nBaseline Model Performance:")
+                print(f"  Test Accuracy: {metrics['accuracy']:.4f}")
+                print(f"  Test Loss: {metrics.get('eval_loss', float('nan')):.4f}")
+                if 'single_inference_time' in metrics:
+                    print(f"  Single Inference Time (s): {metrics['single_inference_time']:.6f}")
+                if 'batch_inference_time' in metrics:
+                    print(f"  Batch Inference Time (s):  {metrics['batch_inference_time']:.6f}")
+                if 'memory_usage_mb' in metrics:
+                    print(f"  Inference Memory Delta (MB): {metrics['memory_usage_mb']:.2f}")
+                print(f"  Total Parameters: {metrics['parameters']:.0f}")
+                print(f"  Model Size (MB): {metrics['model_size_mb']:.2f}")
+                if 'flops' in metrics:
+                    print(f"  Estimated FLOPs: {int(metrics['flops'])}")
+
+                # 在 eval-only 模式下无需训练总结
+                exit(0)
         
         print("\n=== 阶段 1: 训练分类头 (Backbone 冻结) ===")
         print("模型内部将 (32x32) -> (96x96) 以使用预训练权重。")
@@ -339,16 +375,26 @@ if __name__ == "__main__":
         )
         
         print("\n=== Saving final model ===")
-        model.save("baseline_mobilenetv2.keras")
+        model.save(args.model_path)
         
         print("\n=== Evaluating final model on test set ===")
-        metrics = benchmark_baseline_model(model, test_ds, batch_size=BATCH_SIZE)
+        metrics = benchmark_baseline_model(model, test_ds, batch_size=args.batch_size)
         
         print("\nBaseline Model Performance:")
         print(f"  Test Accuracy: {metrics['accuracy']:.4f}")
         print(f"  Test Loss: {metrics['eval_loss']:.4f}")
+        # Latency metrics
+        if 'single_inference_time' in metrics:
+            print(f"  Single Inference Time (s): {metrics['single_inference_time']:.6f}")
+        if 'batch_inference_time' in metrics:
+            print(f"  Batch Inference Time (s):  {metrics['batch_inference_time']:.6f}")
+        # Memory and model complexity
+        if 'memory_usage_mb' in metrics:
+            print(f"  Inference Memory Delta (MB): {metrics['memory_usage_mb']:.2f}")
         print(f"  Total Parameters: {metrics['parameters']:.0f}")
         print(f"  Model Size (MB): {metrics['model_size_mb']:.2f}")
+        if 'flops' in metrics:
+            print(f"  Estimated FLOPs: {int(metrics['flops'])}")
 
         print("\n=== Training Summary ===")
         print(f"Phase 1 - Best validation accuracy: {max(history_phase1.history['val_accuracy']):.4f}")

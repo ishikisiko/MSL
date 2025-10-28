@@ -8,6 +8,8 @@ apply quantization (PTQ/QAT/mixed) and simple memory optimizations.
 from __future__ import annotations
 
 from typing import Dict, Iterable, Optional
+import io
+import contextlib
 
 import numpy as np
 import tensorflow as tf
@@ -113,7 +115,8 @@ def post_training_quantization(model: keras.Model, representative_data: Iterable
     # Ensure input/output are int8
     converter.inference_input_type = tf.int8
     converter.inference_output_type = tf.int8
-    tflite_model = converter.convert()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        tflite_model = converter.convert()
     with open(save_path, "wb") as f:
         f.write(tflite_model)
     return save_path
@@ -158,7 +161,8 @@ def dynamic_range_quantization(model: keras.Model, save_path: str = "model_dynam
     """Apply dynamic-range quantization (weights quantized) and save TFLite file."""
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    tflite_model = converter.convert()
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        tflite_model = converter.convert()
     with open(save_path, "wb") as f:
         f.write(tflite_model)
     return save_path

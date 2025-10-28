@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, Optional, Tuple, Union
+import io
+import contextlib
 
 import numpy as np
 import psutil
@@ -19,9 +21,12 @@ from tensorflow.python.framework.convert_to_constants import (
     convert_variables_to_constants_v2_as_graph,
 )
 
-# Suppress TensorFlow logging to avoid TensorSpec spam
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress INFO and WARNING messages
-tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+# Suppress TensorFlow logging to reduce verbosity
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')  # Suppress INFO and WARNING messages
+try:
+    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+except Exception:
+    pass
 
 
 def calculate_model_metrics(
@@ -48,32 +53,41 @@ def calculate_model_metrics(
         size_bytes += np.prod(weight.shape) * dtype.itemsize
     metrics["model_size_mb"] = size_bytes / (1024 ** 2)
     
-    # FLOPs calculation - suppress TensorFlow logging to avoid TensorSpec spam
+    # FLOPs calculation — silence any noisy stdout/stderr during graph freezing & profiling
     try:
         # Temporarily suppress TensorFlow logging
-        old_verbosity = tf.compat.v1.logging.get_verbosity()
-        tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-        
-        inputs = tf.TensorSpec([batch_size, *model.input_shape[1:]], tf.float32)
-        concrete_fn = tf.function(model).get_concrete_function(inputs)
-        frozen_func, graph_def = convert_variables_to_constants_v2_as_graph(concrete_fn)
-        
-        with tf.Graph().as_default() as graph:
-            tf.graph_util.import_graph_def(graph_def, name="")
-            run_meta = tf.compat.v1.RunMetadata()
-            opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
-            flops = tf.compat.v1.profiler.profile(
-                graph=graph, run_meta=run_meta, cmd="op", options=opts
-            )
-            metrics["flops"] = float(flops.total_float_ops if flops is not None else 0)
-        
+        try:
+            old_verbosity = tf.compat.v1.logging.get_verbosity()
+            tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+        except Exception:
+            old_verbosity = None
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            inputs = tf.TensorSpec([batch_size, *model.input_shape[1:]], tf.float32)
+            concrete_fn = tf.function(model).get_concrete_function(inputs)
+            frozen_func, graph_def = convert_variables_to_constants_v2_as_graph(concrete_fn)
+
+            with tf.Graph().as_default() as graph:
+                tf.graph_util.import_graph_def(graph_def, name="")
+                run_meta = tf.compat.v1.RunMetadata()
+                opts = tf.compat.v1.profiler.ProfileOptionBuilder.float_operation()
+                flops = tf.compat.v1.profiler.profile(
+                    graph=graph, run_meta=run_meta, cmd="op", options=opts
+                )
+                metrics["flops"] = float(flops.total_float_ops if flops is not None else 0)
+
         # Restore original logging verbosity
-        tf.compat.v1.logging.set_verbosity(old_verbosity)
+        if old_verbosity is not None:
+            try:
+                tf.compat.v1.logging.set_verbosity(old_verbosity)
+            except Exception:
+                pass
     except Exception as e:
         # Restore logging verbosity even if an error occurred
         try:
-            tf.compat.v1.logging.set_verbosity(old_verbosity)
-        except:
+            if old_verbosity is not None:
+                tf.compat.v1.logging.set_verbosity(old_verbosity)
+        except Exception:
             pass
         print(f"Warning: FLOPs calculation failed: {e}")
         metrics["flops"] = 0.0
