@@ -14,6 +14,7 @@ import os
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import sys
+import argparse
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -344,12 +345,22 @@ def main():
     print("MLS3 Hardware-Aware Optimization Pipeline")
     print("="*70)
     
+    # CLI args
+    parser = argparse.ArgumentParser(description="Run MLS3 optimization pipeline")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=256,
+        help="Batch size for loading CIFAR-10 datasets used in variant fine-tuning and profiling",
+    )
+    args = parser.parse_args()
+
     # Setup
     ensure_directories()
     
     # Load data
     print("\nLoading CIFAR-10 dataset...")
-    train_ds, val_ds, test_ds = load_and_preprocess_data(batch_size=64)
+    train_ds, val_ds, test_ds = load_and_preprocess_data(batch_size=args.batch_size)
     
     # Load baseline model
     baseline_model = load_baseline_model()

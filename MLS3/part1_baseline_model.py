@@ -35,7 +35,7 @@ NATIVE_INPUT_SHAPE = (32, 32, 3)
 # Backbone 期望的、用于迁移学习的尺寸
 TARGET_INPUT_SHAPE = (96, 96, 3) 
 NUM_CLASSES = 10
-BATCH_SIZE = 64
+BATCH_SIZE = 256
 VALIDATION_SPLIT = 0.1
 
 # ... (GPU 设置 & AUTOTUNE 保持不变) ...
