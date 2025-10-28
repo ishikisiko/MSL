@@ -87,16 +87,15 @@ def create_baseline_model(
     """
     创建一个基于 MobileNetV2 的分类器。
     
-    模型现在直接接收 (96, 96, 3) 的输入，预处理已在数据管道中完成。
+    模型接收 (96, 96, 3) 的输入。数据增强在 GPU 上执行以提升性能。
     """
 
     inputs = keras.Input(shape=input_shape, name="input_image")
     
-    # 预处理和数据增强已移至 tf.data 管道
-    # x = layers.Rescaling(1.0 / 127.5, offset=-1.0, name="rescale_inputs")(inputs)
+    # 数据增强层重新放回模型内部，在 GPU 上执行
+    x = _build_data_augmentation()(inputs)
 
     # Backbone (主干网络)
-    # 关键修复：Backbone 必须用 TARET_SHAPE 实例化！
     backbone = keras.applications.MobileNetV2(
         input_shape=input_shape,
         include_top=False,
@@ -109,9 +108,9 @@ def create_baseline_model(
     backbone.trainable = False
 
     # 以推理模式 (training=False) 调用冻结的 backbone
-    x = backbone(inputs, training=False) 
+    x = backbone(x, training=False) 
 
-    # 5. 分类头 (轻量级)
+    # 分类头 (轻量级)
     x = layers.GlobalAveragePooling2D(name="avg_pool")(x)
     x = layers.Dropout(0.2, name="top_dropout")(x)
     outputs = layers.Dense(num_classes, activation="softmax", name="predictions")(x)
@@ -128,7 +127,8 @@ def load_and_preprocess_data(
 ) -> Tuple[tf.data.Dataset, tf.data.Dataset, tf.data.Dataset]:
     """
     加载 CIFAR-10 并应用预处理。
-    - 上采样、数据增强和归一化现在都在 tf.data 管道中完成。
+    - 上采样和归一化在 CPU 的 tf.data 管道中完成（轻量级操作）
+    - 数据增强在 GPU 的模型内部完成（计算密集型操作）
     """
 
     (x_train, y_train), (x_test, y_test) = keras.datasets.cifar10.load_data()
@@ -149,25 +149,20 @@ def load_and_preprocess_data(
     print(f"验证样本数: {len(x_val)}")
     print(f"测试样本数: {len(x_test)}")
 
-    # 数据增强层现在用于 tf.data.Dataset.map()
-    data_augmentation = _build_data_augmentation()
     upsample_factor = target_shape[0] // NATIVE_INPUT_SHAPE[0]
 
-    def _prepare_dataset(images: np.ndarray, labels: np.ndarray, shuffle: bool, augment: bool) -> tf.data.Dataset:
+    def _prepare_dataset(images: np.ndarray, labels: np.ndarray, shuffle: bool) -> tf.data.Dataset:
         ds = tf.data.Dataset.from_tensor_slices((images, labels))
         if shuffle:
             ds = ds.shuffle(buffer_size=len(images), reshuffle_each_iteration=True)
         
-        # 将所有预处理操作移到这里
+        # 仅执行轻量级预处理：上采样和归一化
         def _preprocess(img, lbl):
             img = tf.cast(img, tf.float32)
-            # 1. 上采样
+            # 1. 上采样到 96x96
             if upsample_factor > 1:
                 img = tf.image.resize(img, (target_shape[0], target_shape[1]), method='bilinear')
-            # 2. 数据增强 (仅用于训练集)
-            if augment:
-                img = data_augmentation(img, training=True)
-            # 3. 归一化
+            # 2. 归一化（MobileNetV2 专用预处理）
             img = tf.keras.applications.mobilenet_v2.preprocess_input(img)
             lbl = tf.squeeze(lbl, axis=-1)
             return img, lbl
@@ -176,9 +171,9 @@ def load_and_preprocess_data(
         ds = ds.batch(batch_size).prefetch(AUTOTUNE)
         return ds
 
-    train_ds = _prepare_dataset(x_train, y_train, shuffle=True, augment=True)
-    val_ds = _prepare_dataset(x_val, y_val, shuffle=False, augment=False)
-    test_ds = _prepare_dataset(x_test, y_test, shuffle=False, augment=False)
+    train_ds = _prepare_dataset(x_train, y_train, shuffle=True)
+    val_ds = _prepare_dataset(x_val, y_val, shuffle=False)
+    test_ds = _prepare_dataset(x_test, y_test, shuffle=False)
 
     return train_ds, val_ds, test_ds
 
@@ -287,7 +282,7 @@ if __name__ == "__main__":
                 exit(0)
         
         print("\n=== 阶段 1: 训练分类头 (Backbone 冻结) ===")
-        print("数据管道将 (32x32) -> (96x96) 以适配预训练权重。")
+        print("CPU 管道负责上采样 (32x32) -> (96x96)，GPU 负责数据增强。")
         model = create_baseline_model(
             input_shape=TARGET_INPUT_SHAPE,
             num_classes=NUM_CLASSES
