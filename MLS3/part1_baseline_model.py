@@ -287,10 +287,9 @@ if __name__ == "__main__":
                 exit(0)
         
         print("\n=== 阶段 1: 训练分类头 (Backbone 冻结) ===")
-        print("模型内部将 (32x32) -> (96x96) 以使用预训练权重。")
+        print("数据管道将 (32x32) -> (96x96) 以适配预训练权重。")
         model = create_baseline_model(
-            native_shape=NATIVE_INPUT_SHAPE,
-            target_shape=TARGET_INPUT_SHAPE,
+            input_shape=TARGET_INPUT_SHAPE,
             num_classes=NUM_CLASSES
         )
         
