@@ -49,7 +49,7 @@ def calculate_model_metrics(
     # Model size in MB
     size_bytes = 0
     for weight in model.weights:
-        dtype = np.dtype(str(weight.dtype))
+        dtype = np.dtype(weight.dtype.name)
         size_bytes += np.prod(weight.shape) * dtype.itemsize
     metrics["model_size_mb"] = size_bytes / (1024 ** 2)
     

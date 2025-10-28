@@ -67,8 +67,11 @@ simulate:
 
 # Analysis
 analyze:
+	@echo "Generating optimization analysis report..."
 	$(PYTHON) $(FRAMEWORK) --generate-report
-	@echo "Analysis report generated"
+	@echo ""
+	@echo "Analysis report generated successfully!"
+	@echo "View report with: cat results/optimization_analysis.txt"
 
 # Testing
 test:

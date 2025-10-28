@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir:*)",
+      "Read(//c/Users/90538/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
