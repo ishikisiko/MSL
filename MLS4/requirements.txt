@@ -1,0 +1,7 @@
+tensorflow
+tensorflow-model-optimization
+numpy
+matplotlib
+seaborn
+scikit-learn
+psutil
