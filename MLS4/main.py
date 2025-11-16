@@ -46,19 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=64,
         help="Batch size for evaluations.",
     )
     parser.add_argument(
         "--baseline-batch-size",
         type=int,
-        default=256,
+        default=64,
         help="Batch size for baseline training.",
     )
     parser.add_argument(
         "--baseline-epochs",
         type=int,
-        default=30,
+        default=5,
         help="Total epochs for baseline training.",
     )
     parser.add_argument(

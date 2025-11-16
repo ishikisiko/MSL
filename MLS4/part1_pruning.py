@@ -16,6 +16,14 @@ DatasetLike = Union[
 ]
 
 
+PRUNABLE_LAYER_TYPES = (
+    tf.keras.layers.Conv2D,
+    tf.keras.layers.DepthwiseConv2D,
+    tf.keras.layers.SeparableConv2D,
+    tf.keras.layers.Dense,
+)
+
+
 @dataclass
 class DatasetBundle:
     train: tf.data.Dataset
@@ -107,7 +115,7 @@ class PruningComparator:
         )
 
         cloned_model = self._clone_and_compile(learning_rate=learning_rate)
-        pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
+        pruned_model = self._apply_pruning_wrappers(
             cloned_model,
             pruning_schedule=schedule,
         )
@@ -409,7 +417,7 @@ class PruningComparator:
                 batch_size=batch_size,
                 train_size=self._resolve_dataset_size(None, default="train"),
             )
-            pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
+            pruned_model = self._apply_pruning_wrappers(
                 model,
                 pruning_schedule=schedule,
             )
@@ -472,6 +480,39 @@ class PruningComparator:
     # ---------------------------------------------------------------------- #
     # Internal utilities
     # ---------------------------------------------------------------------- #
+    def _apply_pruning_wrappers(
+        self,
+        model: tf.keras.Model,
+        pruning_schedule,
+    ) -> tf.keras.Model:
+        """Clone `model` while wrapping supported layers with pruning."""
+
+        def maybe_prune(layer: tf.keras.layers.Layer):
+            if self._is_layer_prunable(layer):
+                return tfmot.sparsity.keras.prune_low_magnitude(
+                    layer,
+                    pruning_schedule=pruning_schedule,
+                )
+            return layer
+
+        pruned_model = tf.keras.models.clone_model(
+            model,
+            clone_function=maybe_prune,
+        )
+        pruned_model.set_weights(model.get_weights())
+        return pruned_model
+
+    def _is_layer_prunable(self, layer: tf.keras.layers.Layer) -> bool:
+        if isinstance(layer, PRUNABLE_LAYER_TYPES):
+            return True
+        get_prunable = getattr(layer, "get_prunable_weights", None)
+        if callable(get_prunable):
+            try:
+                return bool(get_prunable())
+            except Exception:
+                return False
+        return False
+
     def _safe_set_learning_rate(self, optimizer, learning_rate: Optional[float]) -> None:
         """Safely set learning rate, handling schedulers and non-settable cases."""
         if learning_rate is None:
