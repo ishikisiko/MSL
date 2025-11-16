@@ -450,15 +450,8 @@ class QuantizationPipeline:
 
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
-        metrics = []
-        for metric_config in self._metric_configs:
-            if isinstance(metric_config, str):
-                metrics.append(metric_config)
-            else:
-                try:
-                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
-                except Exception:
-                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+        # Use string metrics to avoid sample_weight parameter conflicts
+        metrics = ["accuracy"]
         clone.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
         for layer in self._quantizable_layers(clone):

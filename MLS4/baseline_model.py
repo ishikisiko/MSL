@@ -309,7 +309,7 @@ def prepare_compression_datasets(
 
 
 def train_baseline_model(
-    epochs: int = 50,
+    epochs: int = 10,
     batch_size: int = 256,
     output_path: str = DEFAULT_MODEL_PATH,
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
