@@ -202,11 +202,55 @@ class CompressionEvaluator:
         total_flops = 0
         for layer in model.layers:
             if isinstance(layer, tf.keras.layers.Conv2D):
-                kernel_h, kernel_w, in_channels, out_channels = layer.kernel_size[0], layer.kernel_size[1], layer.input_shape[-1], layer.filters
-                output_h, output_w = layer.output_shape[1], layer.output_shape[2]
-                total_flops += 2 * kernel_h * kernel_w * in_channels * out_channels * output_h * output_w
+                kernel_h, kernel_w = layer.kernel_size
+                kernel = getattr(layer, "kernel", None)
+                in_channels = kernel.shape[2] if kernel is not None else None
+                if in_channels is None:
+                    input_tensor = getattr(layer, "input", None)
+                    input_shape = getattr(input_tensor, "shape", None)
+                    if isinstance(input_shape, tf.TensorShape):
+                        input_shape = input_shape.as_list()
+                    if isinstance(input_shape, (tuple, list)) and input_shape:
+                        in_channels = input_shape[-1]
+                if hasattr(in_channels, "value"):
+                    in_channels = in_channels.value
+                if in_channels is None:
+                    continue
+                out_channels = layer.filters
+                output_shape = getattr(layer, "output_shape", None)
+                if isinstance(output_shape, tf.TensorShape):
+                    output_shape = output_shape.as_list()
+                if output_shape is None:
+                    tensor = getattr(layer, "output", None)
+                    tensor_shape = getattr(tensor, "shape", None)
+                    if isinstance(tensor_shape, tf.TensorShape):
+                        output_shape = tensor_shape.as_list()
+                    else:
+                        output_shape = tensor_shape
+                if not isinstance(output_shape, (tuple, list)) or len(output_shape) < 3:
+                    continue
+                output_h, output_w = output_shape[1], output_shape[2]
+                if hasattr(output_h, "value"):
+                    output_h = output_h.value
+                if hasattr(output_w, "value"):
+                    output_w = output_w.value
+                if None in (kernel_h, kernel_w, in_channels, out_channels, output_h, output_w):
+                    continue
+                total_flops += 2 * int(kernel_h) * int(kernel_w) * int(in_channels) * int(out_channels) * int(output_h) * int(output_w)
             elif isinstance(layer, tf.keras.layers.Dense):
-                total_flops += 2 * layer.input_shape[-1] * layer.units
+                if layer.kernel is not None:
+                    input_units = layer.kernel.shape[0]
+                else:
+                    previous = getattr(layer, "input", None)
+                    input_shape = getattr(previous, "shape", None)
+                    if isinstance(input_shape, tf.TensorShape):
+                        input_shape = input_shape.as_list()
+                    input_units = input_shape[-1] if isinstance(input_shape, (tuple, list)) and input_shape else None
+                if hasattr(input_units, "value"):
+                    input_units = input_units.value
+                if input_units is None:
+                    continue
+                total_flops += 2 * int(input_units) * int(layer.units)
         return float(total_flops)
 
     def _compute_compression_ratio(self, model_size_mb: float) -> float:
