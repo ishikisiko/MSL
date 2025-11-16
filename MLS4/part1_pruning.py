@@ -485,22 +485,35 @@ class PruningComparator:
         model: tf.keras.Model,
         pruning_schedule,
     ) -> tf.keras.Model:
-        """Wrap supported layers with pruning masks without reassigning weights."""
+        """Clone `model` while wrapping supported layers with pruning."""
 
-        pruning_params = {
-            "pruning_schedule": pruning_schedule,
-        }
+        def maybe_prune(layer: tf.keras.layers.Layer):
+            if self._is_layer_prunable(layer):
+                return tfmot.sparsity.keras.prune_low_magnitude(
+                    layer,
+                    pruning_schedule=pruning_schedule,
+                )
+            return layer
 
-        # tfmot handles cloning and initializes pruning metadata while
-        # preserving the original layer weights. Avoid manual set_weights
-        # because pruned layers introduce extra mask variables.
-        pruned_model = tfmot.sparsity.keras.prune_low_magnitude(
+        # clone_model automatically copies the pretrained weights; avoid
+        # calling set_weights because pruning wrappers add mask variables.
+        pruned_model = tf.keras.models.clone_model(
             model,
-            **pruning_params,
+            clone_function=maybe_prune,
         )
         return pruned_model
 
     def _is_layer_prunable(self, layer: tf.keras.layers.Layer) -> bool:
+        registry = getattr(tfmot.sparsity.keras, "pruning_registry", None)
+        if registry is not None:
+            supports = getattr(registry.PruneRegistry, "supports", None)
+            if callable(supports):
+                try:
+                    if supports(layer):
+                        return True
+                except Exception:
+                    pass
+
         if isinstance(layer, PRUNABLE_LAYER_TYPES):
             return True
         get_prunable = getattr(layer, "get_prunable_weights", None)
