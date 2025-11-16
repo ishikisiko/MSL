@@ -22,7 +22,7 @@ class CombinationResult:
     accuracy: float
     compression_ratio: float
     notes: str
-    model: tf.keras.Model
+    model_name: str
 
 
 class CompressionInteractionAnalyzer:
@@ -75,6 +75,7 @@ class CompressionInteractionAnalyzer:
                 AdaptiveTopKCategoricalAccuracy(num_classes=self._num_classes, k=5, name="top5"),
             ]
             self._metric_configs = [tf.keras.metrics.serialize(metric) for metric in fallback_metrics]
+        self._combination_models: Dict[str, tf.keras.Model] = {}
 
     # ------------------------------------------------------------------ #
     # Combination experiments
@@ -340,12 +341,14 @@ class CompressionInteractionAnalyzer:
             sum(w.numpy().size * 32 for w in self.baseline_model.trainable_weights)
             / max(1, size_bits)
         )
+        readable_name = getattr(model, "name", name)
+        self._combination_models[name] = model
         result = CombinationResult(
             name=name,
             accuracy=accuracy,
             compression_ratio=compression_ratio,
             notes=notes,
-            model=model,
+            model_name=readable_name,
         )
         return result.__dict__
 
@@ -472,22 +475,29 @@ class CompressionInteractionAnalyzer:
         ]
 
     def _evaluate_accuracy(self, model: tf.keras.Model) -> float:
-        """Evaluate accuracy with a fallback for sample_weight retracing bugs."""
+        """Evaluate accuracy using a manual loop to avoid retracing bugs during combos."""
 
         try:
-            metrics = model.evaluate(self.test_dataset, verbose=0)
-        except (TypeError, ValueError) as exc:
+            return self._manual_accuracy(model)
+        except Exception as exc:  # pragma: no cover - defensive fallback
             tf.get_logger().warning(
-                "Falling back to manual accuracy computation during combination analysis: %s",
+                "Manual accuracy computation failed (%s); falling back to model.evaluate.",
                 exc,
             )
-            return self._manual_accuracy(model)
+            try:
+                metrics = model.evaluate(self.test_dataset, verbose=0)
+            except (TypeError, ValueError) as eval_exc:
+                tf.get_logger().warning(
+                    "Falling back to zero accuracy after repeated evaluation failures: %s",
+                    eval_exc,
+                )
+                return 0.0
 
-        if isinstance(metrics, list):
-            if len(metrics) > 1:
-                return float(metrics[1])
-            return float(metrics[0])
-        return float(metrics)
+            if isinstance(metrics, list):
+                if len(metrics) > 1:
+                    return float(metrics[1])
+                return float(metrics[0])
+            return float(metrics)
 
     def _manual_accuracy(self, model: tf.keras.Model) -> float:
         total_correct = 0
