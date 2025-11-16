@@ -551,6 +551,29 @@ class DistillationFramework:
     ) -> tf.Tensor:
         losses = []
         for teacher_feat, student_feat in zip(teacher_feats, student_feats):
+            # Align channels if needed
+            t_channels = teacher_feat.shape[-1]
+            s_channels = student_feat.shape[-1]
+            
+            if t_channels != s_channels:
+                # Project student features to match teacher channels
+                student_feat = tf.keras.layers.Conv2D(
+                    t_channels, 
+                    kernel_size=1, 
+                    padding='same',
+                    use_bias=False
+                )(student_feat)
+            
+            # Align spatial dimensions if needed
+            t_shape = tf.shape(teacher_feat)
+            s_shape = tf.shape(student_feat)
+            if teacher_feat.shape[1] != student_feat.shape[1] or teacher_feat.shape[2] != student_feat.shape[2]:
+                student_feat = tf.image.resize(
+                    student_feat,
+                    [t_shape[1], t_shape[2]],
+                    method='bilinear'
+                )
+            
             teacher_norm = tf.nn.l2_normalize(teacher_feat, axis=-1)
             student_norm = tf.nn.l2_normalize(student_feat, axis=-1)
             losses.append(tf.reduce_mean(tf.square(teacher_norm - student_norm)))
