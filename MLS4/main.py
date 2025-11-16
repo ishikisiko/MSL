@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-lr",
         type=float,
-        default=6e-4,
+        default=1e-3,
         help="Base learning rate for the baseline schedule.",
     )
     parser.add_argument(

@@ -116,8 +116,7 @@ class PruningComparator:
         # compilation before training. Reuse optimizer/loss/metrics from the
         # cloned (compiled) model but allow learning rate overrides.
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-        if learning_rate is not None and hasattr(optimizer, "learning_rate"):
-            optimizer.learning_rate = learning_rate
+        self._safe_set_learning_rate(optimizer, learning_rate)
 
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
 
@@ -417,8 +416,7 @@ class PruningComparator:
 
             # Ensure the pruning-wrapped model is compiled for training
             optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-            if learning_rate is not None and hasattr(optimizer, "learning_rate"):
-                optimizer.learning_rate = learning_rate
+            self._safe_set_learning_rate(optimizer, learning_rate)
 
             loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
 
@@ -474,6 +472,52 @@ class PruningComparator:
     # ---------------------------------------------------------------------- #
     # Internal utilities
     # ---------------------------------------------------------------------- #
+    def _safe_set_learning_rate(self, optimizer, learning_rate: Optional[float]) -> None:
+        """Safely set learning rate, handling schedulers and non-settable cases."""
+        if learning_rate is None:
+            return
+        
+        # Check if optimizer uses a learning rate schedule
+        if hasattr(optimizer, '_learning_rate') and hasattr(optimizer._learning_rate, '__call__'):
+            # Recreate optimizer with float learning rate
+            optimizer_class = optimizer.__class__
+            config = optimizer.get_config()
+            config['learning_rate'] = learning_rate
+            
+            # Handle weight decay parameter name differences
+            weight_decay_key = None
+            for key in ['weight_decay', 'decay']:
+                if key in config:
+                    weight_decay_key = key
+                    break
+            
+            try:
+                # Try to recreate with learning_rate parameter
+                new_optimizer = optimizer_class(learning_rate=learning_rate, **{
+                    k: v for k, v in config.items() 
+                    if k not in ['learning_rate', 'name', 'weight_decay', 'decay']
+                })
+                # Copy weight decay if present
+                if weight_decay_key and hasattr(new_optimizer, weight_decay_key):
+                    setattr(new_optimizer, weight_decay_key, config.get(weight_decay_key, 0.0))
+                
+                # Replace the optimizer object
+                for attr in dir(new_optimizer):
+                    if not attr.startswith('_'):
+                        try:
+                            setattr(optimizer, attr, getattr(new_optimizer, attr))
+                        except (AttributeError, TypeError):
+                            pass
+            except Exception:
+                # If recreation fails, skip setting learning rate
+                pass
+        elif hasattr(optimizer, 'learning_rate'):
+            try:
+                optimizer.learning_rate = learning_rate
+            except (TypeError, AttributeError):
+                # Learning rate is not settable, skip
+                pass
+
     def _clone_and_compile(
         self,
         learning_rate: Optional[float] = None,
@@ -482,8 +526,7 @@ class PruningComparator:
         model_clone.set_weights(self.base_model.get_weights())
 
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-        if learning_rate is not None and hasattr(optimizer, "learning_rate"):
-            optimizer.learning_rate = learning_rate
+        self._safe_set_learning_rate(optimizer, learning_rate)
 
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
         metrics = []
