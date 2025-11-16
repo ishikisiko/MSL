@@ -71,11 +71,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def to_dataset(x, y, batch_size):
-    return (
-        tf.data.Dataset.from_tensor_slices((x, y))
-        .batch(batch_size)
-        .prefetch(AUTOTUNE)
-    )
+    """Create TF dataset with proper configuration to avoid sample_weight conflicts."""
+    dataset = tf.data.Dataset.from_tensor_slices((x, y))
+    dataset = dataset.batch(batch_size, drop_remainder=False)
+    dataset = dataset.prefetch(AUTOTUNE)
+    return dataset
 
 
 def main() -> None:

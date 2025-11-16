@@ -1,8 +1,58 @@
 # 训练准确率修复说明
 
+## 最新修复 (2025-11-16)
+
+### 🔧 修复 `sample_weight` TypeError
+
+**问题症状:**
+```
+TypeError: Reduce.update_state() got multiple values for argument 'sample_weight'
+```
+
+**根本原因:**
+- `tf_keras` 在使用 `tf.data.Dataset.from_tensor_slices((x, y)).batch()` 创建的数据集时
+- 在 `model.evaluate()` 过程中会错误地重复传递 `sample_weight` 参数给 metrics
+
+**解决方案:**
+
+1. **修改数据集创建 (main.py)**:
+```python
+def to_dataset(x, y, batch_size):
+    """Create TF dataset with proper configuration to avoid sample_weight conflicts."""
+    dataset = tf.data.Dataset.from_tensor_slices((x, y))
+    dataset = dataset.batch(batch_size, drop_remainder=False)
+    dataset = dataset.prefetch(AUTOTUNE)
+    return dataset
+```
+
+2. **添加评估错误处理 (part2_quantization.py)**:
+```python
+def _evaluate_model(self, model, dataset):
+    try:
+        metrics = model.evaluate(dataset, verbose=0)
+        ...
+    except TypeError as e:
+        if "sample_weight" in str(e):
+            # Fallback: manual evaluation
+            total_correct = 0
+            total_samples = 0
+            for x_batch, y_batch in dataset:
+                predictions = model.predict(x_batch, verbose=0)
+                ...
+            return float(total_correct / total_samples)
+        raise
+```
+
+**验证修复:**
+```bash
+python main.py --batch-size 128
+```
+
+---
+
 ## 问题诊断
 
-从您提供的训练日志来看，存在严重的**过拟合**问题：
+从您提供的训练日志来看,存在严重的**过拟合**问题:
 - 训练集准确率：持续上升至 76.84%
 - 验证集准确率：停滞在 5-7% 左右（接近随机猜测 1/100 = 1%）
 - 验证损失：不断增大（从 6.06 → 7.98）

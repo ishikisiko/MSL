@@ -549,10 +549,28 @@ class QuantizationPipeline:
         model: tf.keras.Model,
         dataset: tf.data.Dataset,
     ) -> float:
-        metrics = model.evaluate(dataset, verbose=0)
-        if isinstance(metrics, list):
-            return float(metrics[1]) if len(metrics) > 1 else float(metrics[0])
-        return float(metrics)
+        """Evaluate model with workaround for tf_keras sample_weight issue."""
+        try:
+            # Try standard evaluation first
+            metrics = model.evaluate(dataset, verbose=0)
+            if isinstance(metrics, list):
+                return float(metrics[1]) if len(metrics) > 1 else float(metrics[0])
+            return float(metrics)
+        except TypeError as e:
+            if "sample_weight" in str(e):
+                # Fallback: manual evaluation for sample_weight conflicts
+                total_correct = 0
+                total_samples = 0
+                for x_batch, y_batch in dataset:
+                    predictions = model.predict(x_batch, verbose=0)
+                    predicted_labels = tf.argmax(predictions, axis=1)
+                    true_labels = tf.argmax(y_batch, axis=1) if len(y_batch.shape) > 1 else y_batch
+                    total_correct += tf.reduce_sum(
+                        tf.cast(tf.equal(predicted_labels, true_labels), tf.int32)
+                    ).numpy()
+                    total_samples += x_batch.shape[0]
+                return float(total_correct / total_samples) if total_samples > 0 else 0.0
+            raise
 
     def _baseline_accuracy(self, dataset: tf.data.Dataset) -> float:
         if "baseline_accuracy" not in self.quantization_results:
