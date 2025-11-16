@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import tf_compat  # noqa: F401  # keep tfmot compatible with newer TensorFlow builds
@@ -15,6 +17,35 @@ CALIBRATION_SIZE = 1000
 VAL_SIZE = 5000
 DEFAULT_MODEL_PATH = "baseline_model.keras"
 DEFAULT_CHECKPOINT_PATH = "checkpoints/baseline_best.keras"
+RESULTS_DIR = Path("results")
+REPORTS_DIR = Path("reports")
+DATASET_CACHE_PATH = RESULTS_DIR / "datasets" / "cifar100_splits_v1.npz"
+CALIBRATION_EXPORT_PATH = RESULTS_DIR / "datasets" / "calibration_samples.npz"
+TRAIN_HISTORY_PATH = RESULTS_DIR / "baseline_training_history.json"
+BASELINE_REPORT_PATH = REPORTS_DIR / "baseline_summary.json"
+DROP_REMAINDER_BATCH_SIZE = 256
+DEFAULT_BATCHNORM_PASSES = 200
+
+
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+DATASET_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+CALIBRATION_EXPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+_AUGMENTATION_PIPELINE = tf.keras.Sequential(
+    [
+        tf.keras.layers.RandomFlip("horizontal"),
+        tf.keras.layers.RandomTranslation(0.1, 0.1, fill_mode="reflect"),
+        tf.keras.layers.RandomRotation(0.05),
+        tf.keras.layers.RandomZoom(0.1),
+    ],
+    name="cifar100_train_aug",
+)
+
+
+def _augment_batch(images: tf.Tensor, labels: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+    return _AUGMENTATION_PIPELINE(images, training=True), labels
 
 
 @dataclass
@@ -157,104 +188,78 @@ CUSTOM_OBJECTS: Dict[str, Any] = {
 }
 
 
+def build_optimizer(
+    optimizer_name: str,
+    learning_rate: Union[float, tf.keras.optimizers.schedules.LearningRateSchedule],
+    weight_decay: float,
+    momentum: float = 0.9,
+) -> tf.keras.optimizers.Optimizer:
+    name = optimizer_name.lower()
+    if name == "adamw":
+        return tf.keras.optimizers.AdamW(
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            beta_1=0.9,
+            beta_2=0.999,
+            epsilon=1e-7,
+        )
+    if name == "sgdw":
+        return tf.keras.optimizers.SGD(
+            learning_rate=learning_rate,
+            momentum=momentum,
+            nesterov=True,
+            weight_decay=weight_decay,
+        )
+    raise ValueError(f"Unsupported optimizer '{optimizer_name}'. Use 'adamw' or 'sgdw'.")
+
+
 def create_baseline_model(
     input_shape: Tuple[int, int, int] = (32, 32, 3),
     num_classes: int = 100,
     dropout_rate: float = 0.3,
     width_multiplier: float = 1.0,
+    optimizer_name: str = "adamw",
+    learning_rate: Union[float, tf.keras.optimizers.schedules.LearningRateSchedule] = 5e-4,
+    weight_decay: float = 5e-5,
 ) -> tf.keras.Model:
-    """
-    Create a lightweight ResNet-style baseline suitable for CIFAR-100.
+    """Create an EfficientNet-B0 based baseline tailored for CIFAR-100."""
 
-    The architecture intentionally mirrors Keras' ResNet blocks so it can reach
-    >75% top-1 accuracy after full training, while remaining compact enough for
-    subsequent pruning experiments.
-    """
-
-    def residual_block(
-        x: tf.Tensor,
-        filters: int,
-        downsample: bool = False,
-        name: Optional[str] = None,
-    ) -> tf.Tensor:
-        stride = 2 if downsample else 1
-        shortcut = x
-
-        y = tf.keras.layers.Conv2D(
-            filters,
-            kernel_size=3,
-            strides=stride,
-            padding="same",
-            use_bias=False,
-            kernel_initializer="he_normal",
-            name=None if name is None else f"{name}_conv1",
-        )(x)
-        y = tf.keras.layers.BatchNormalization(name=None if name is None else f"{name}_bn1")(y)
-        y = tf.keras.layers.Activation("relu")(y)
-        y = tf.keras.layers.Conv2D(
-            filters,
-            kernel_size=3,
-            padding="same",
-            use_bias=False,
-            kernel_initializer="he_normal",
-            name=None if name is None else f"{name}_conv2",
-        )(y)
-        y = tf.keras.layers.BatchNormalization(name=None if name is None else f"{name}_bn2")(y)
-
-        if downsample or shortcut.shape[-1] != filters:
-            shortcut = tf.keras.layers.Conv2D(
-                filters,
-                kernel_size=1,
-                strides=stride,
-                padding="same",
-                use_bias=False,
-                kernel_initializer="he_normal",
-                name=None if name is None else f"{name}_proj",
-            )(shortcut)
-            shortcut = tf.keras.layers.BatchNormalization(
-                name=None if name is None else f"{name}_proj_bn"
-            )(shortcut)
-
-        out = tf.keras.layers.Add()([shortcut, y])
-        out = tf.keras.layers.Activation("relu")(out)
-        return out
-
-    def scaled_filters(filters: int) -> int:
-        return max(16, int(filters * width_multiplier))
+    resize_target = 128
+    bottleneck_units = max(128, int(1280 * width_multiplier))
 
     inputs = tf.keras.layers.Input(shape=input_shape)
-    x = inputs
-    x = tf.keras.layers.Conv2D(
-        scaled_filters(64),
-        kernel_size=3,
-        padding="same",
-        use_bias=False,
+    x = tf.keras.layers.Resizing(resize_target, resize_target, name="resize_to_128")(inputs)
+    backbone = tf.keras.applications.EfficientNetB0(
+        include_top=False,
+        weights=None,
+        input_tensor=x,
+        drop_connect_rate=0.2,
+    )
+    x = backbone.output
+    x = tf.keras.layers.BatchNormalization(name="backbone_bn")(x)
+    x = tf.keras.layers.GlobalAveragePooling2D(name="avg_pool")(x)
+    x = tf.keras.layers.Dropout(dropout_rate, name="pre_projection_dropout")(x)
+    x = tf.keras.layers.Dense(
+        bottleneck_units,
+        activation="swish",
         kernel_initializer="he_normal",
+        name="projection_dense",
     )(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Activation("relu")(x)
-
-    x = residual_block(x, scaled_filters(64), name="block1a")
-    x = residual_block(x, scaled_filters(64), name="block1b")
-    x = residual_block(x, scaled_filters(128), downsample=True, name="block2a")
-    x = residual_block(x, scaled_filters(128), name="block2b")
-    x = residual_block(x, scaled_filters(256), downsample=True, name="block3a")
-    x = residual_block(x, scaled_filters(256), name="block3b")
-    x = residual_block(x, scaled_filters(512), downsample=True, name="block4a")
-    x = residual_block(x, scaled_filters(512), name="block4b")
-
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dropout(dropout_rate)(x)
+    x = tf.keras.layers.BatchNormalization(name="projection_bn")(x)
+    x = tf.keras.layers.Dropout(dropout_rate, name="post_projection_dropout")(x)
     outputs = tf.keras.layers.Dense(
         num_classes,
         activation="softmax",
-        kernel_initializer="he_normal",
+        kernel_initializer="lecun_normal",
+        name="classification_head",
     )(x)
 
-    model = tf.keras.Model(inputs, outputs, name="cifar100_resnet")
-    optimizer = tf.keras.optimizers.AdamW(learning_rate=5e-4, weight_decay=5e-5)
-    # Compile with an adaptive loss/metric stack so evaluations tolerate either
-    # sparse integer labels or one-hot vectors while preserving label smoothing.
+    model = tf.keras.Model(inputs, outputs, name="cifar100_efficientnet_b0")
+    optimizer = build_optimizer(
+        optimizer_name=optimizer_name,
+        learning_rate=learning_rate,
+        weight_decay=weight_decay,
+    )
     model.compile(
         optimizer=optimizer,
         loss=AdaptiveCategoricalCrossentropy(num_classes=num_classes, label_smoothing=0.1),
@@ -270,57 +275,98 @@ def prepare_compression_datasets(
     val_size: int = VAL_SIZE,
     calibration_size: int = CALIBRATION_SIZE,
     seed: int = 42,
+    cache_path: Optional[Union[str, Path]] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, Tuple[np.ndarray, np.ndarray]]:
-    """
-    Load and normalize CIFAR-100, returning numpy arrays for downstream tasks.
+    """Load CIFAR-100 with deterministic splits and persistent caching."""
 
-    Returns:
-        tuple: (x_train, y_train, x_val, y_val, x_test, y_test, calibration_data)
-    """
+    cache_file = Path(cache_path) if cache_path is not None else DATASET_CACHE_PATH
+    cache_payload = _load_cached_dataset(cache_file)
+    if cache_payload:
+        meta = cache_payload["metadata"]
+        if (
+            meta.get("version", 0) == 1
+            and meta["val_size"] == val_size
+            and meta["calibration_size"] == calibration_size
+            and meta["seed"] == seed
+        ):
+            arrays = cache_payload["arrays"]
+        else:
+            cache_payload = None
+    if cache_payload is None:
+        (raw_train, raw_train_labels), (x_test, y_test) = tf.keras.datasets.cifar100.load_data()
+        raw_train = raw_train.astype("float32")
+        x_test = x_test.astype("float32")
 
-    (x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar100.load_data()
+        mean = np.mean(raw_train, axis=(0, 1, 2), keepdims=True)
+        std = np.std(raw_train, axis=(0, 1, 2), keepdims=True) + 1e-7
+        raw_train = (raw_train - mean) / std
+        x_test = (x_test - mean) / std
 
-    x_train = x_train.astype("float32")
-    x_test = x_test.astype("float32")
+        rng = np.random.default_rng(seed)
+        indices = rng.permutation(len(raw_train))
+        raw_train = raw_train[indices]
+        raw_train_labels = raw_train_labels[indices]
 
-    mean = np.mean(x_train, axis=(0, 1, 2), keepdims=True)
-    std = np.std(x_train, axis=(0, 1, 2), keepdims=True) + 1e-7
-    x_train = (x_train - mean) / std
-    x_test = (x_test - mean) / std
+        if val_size <= 0 or val_size >= len(raw_train):
+            raise ValueError("val_size must be between 1 and len(x_train) - 1")
+        x_val = raw_train[:val_size]
+        y_val = raw_train_labels[:val_size]
+        x_train = raw_train[val_size:]
+        y_train = raw_train_labels[val_size:]
 
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(len(x_train))
-    x_train = x_train[indices]
-    y_train = y_train[indices]
+        if calibration_size >= len(x_train):
+            raise ValueError("calibration_size must be smaller than remaining training set")
+        calibration_indices = rng.choice(len(x_train), size=calibration_size, replace=False)
+        calibration_data = (x_train[calibration_indices], y_train[calibration_indices])
 
-    if val_size <= 0 or val_size >= len(x_train):
-        raise ValueError("val_size must be between 1 and len(x_train) - 1")
-    x_val = x_train[:val_size]
-    y_val = y_train[:val_size]
-    x_train = x_train[val_size:]
-    y_train = y_train[val_size:]
+        arrays = {
+            "x_train": x_train,
+            "y_train": y_train,
+            "x_val": x_val,
+            "y_val": y_val,
+            "x_test": x_test,
+            "y_test": y_test,
+            "calibration_x": calibration_data[0],
+            "calibration_y": calibration_data[1],
+        }
+        metadata = {
+            "seed": seed,
+            "val_size": val_size,
+            "calibration_size": calibration_size,
+            "mean": mean.mean().item(),
+            "std": std.mean().item(),
+            "version": 1,
+        }
+        _persist_dataset_cache(cache_file, arrays, metadata)
+    else:
+        arrays = cache_payload["arrays"]
 
-    if calibration_size >= len(x_train):
-        raise ValueError("calibration_size must be smaller than remaining training set")
-    calibration_indices = rng.choice(len(x_train), size=calibration_size, replace=False)
-    calibration_data = (x_train[calibration_indices], y_train[calibration_indices])
+    calibration_data = (arrays["calibration_x"], arrays["calibration_y"])
+    _export_calibration_samples(calibration_data)
 
-    return x_train, y_train, x_val, y_val, x_test, y_test, calibration_data
+    return (
+        arrays["x_train"],
+        arrays["y_train"],
+        arrays["x_val"],
+        arrays["y_val"],
+        arrays["x_test"],
+        arrays["y_test"],
+        calibration_data,
+    )
 
 
 def train_baseline_model(
-    epochs: int = 10,
-    batch_size: int = 256,
+    epochs: int = 30,
+    batch_size: int = DROP_REMAINDER_BATCH_SIZE,
     output_path: str = DEFAULT_MODEL_PATH,
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
     seed: int = 42,
-) -> Dict:
-    """
-    Train the CIFAR-100 baseline model and export it for pruning stages.
-
-    Returns:
-        dict: training history, final accuracy, and saved model paths.
-    """
+    optimizer_name: str = "adamw",
+    base_learning_rate: float = 6e-4,
+    weight_decay: float = 1e-4,
+    ema_decay: Optional[float] = 0.999,
+) -> Dict[str, Any]:
+    """Train the EfficientNet-B0 baseline with modern regularization."""
 
     (
         x_train,
@@ -332,32 +378,68 @@ def train_baseline_model(
         calibration_data,
     ) = prepare_compression_datasets(seed=seed)
 
-    tf.random.set_seed(seed)
-    np.random.seed(seed)
-
-    # Instantiate model first so we can perform dataset label conversion
-    # (one-hot) consistent with `CategoricalCrossentropy` which expects
-    # categorical labels.
-    model = create_baseline_model()
-
-    train_ds = _build_dataset(
-        x_train, y_train, batch_size, augment=True, shuffle=True, num_classes=model.output_shape[-1]
-    )
-    val_ds = _build_dataset(x_val, y_val, batch_size, num_classes=model.output_shape[-1])
-    test_ds = _build_dataset(x_test, y_test, batch_size, num_classes=model.output_shape[-1])
-
+    try:
+        tf.keras.utils.set_random_seed(seed)
+    except AttributeError:  # pragma: no cover - fallback for older TF builds
+        tf.random.set_seed(seed)
+        np.random.seed(seed)
     Path(os.path.dirname(checkpoint_path) or ".").mkdir(parents=True, exist_ok=True)
     Path(os.path.dirname(output_path) or ".").mkdir(parents=True, exist_ok=True)
 
-    # Learning rate warmup schedule
-    def lr_schedule(epoch, lr):
-        warmup_epochs = 5
-        if epoch < warmup_epochs:
-            return 5e-4 * (epoch + 1) / warmup_epochs
-        return lr
+    steps_per_epoch = math.ceil(len(x_train) / batch_size)
+    total_steps = steps_per_epoch * max(epochs, 1)
+    first_decay_steps = max(total_steps // 5, steps_per_epoch, 1)
+    lr_schedule = tf.keras.optimizers.schedules.CosineDecayRestarts(
+        initial_learning_rate=base_learning_rate,
+        first_decay_steps=first_decay_steps,
+        t_mul=1.6,
+        m_mul=0.85,
+        alpha=0.1,
+    )
 
+    model = create_baseline_model(
+        optimizer_name=optimizer_name,
+        learning_rate=lr_schedule,
+        weight_decay=weight_decay,
+    )
+    num_classes = model.output_shape[-1]
+
+    train_ds = _build_dataset(
+        x_train,
+        y_train,
+        batch_size,
+        augment=True,
+        shuffle=True,
+        num_classes=num_classes,
+        drop_remainder=True,
+    )
+    val_ds = _build_dataset(
+        x_val,
+        y_val,
+        batch_size,
+        augment=False,
+        shuffle=False,
+        num_classes=num_classes,
+    )
+    test_ds = _build_dataset(
+        x_test,
+        y_test,
+        batch_size,
+        augment=False,
+        shuffle=False,
+        num_classes=num_classes,
+    )
+    bn_ds = _build_dataset(
+        x_train,
+        y_train,
+        batch_size,
+        augment=False,
+        shuffle=False,
+        num_classes=num_classes,
+    )
+
+    csv_logger = tf.keras.callbacks.CSVLogger(str(RESULTS_DIR / "baseline_training_log.csv"), append=False)
     callbacks = [
-        tf.keras.callbacks.LearningRateScheduler(lr_schedule, verbose=0),
         tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_path,
             monitor="val_accuracy",
@@ -366,20 +448,26 @@ def train_baseline_model(
             save_weights_only=False,
             verbose=1,
         ),
-        tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss",
-            factor=0.5,
-            patience=3,
-            min_lr=1e-6,
-            verbose=1,
-        ),
         tf.keras.callbacks.EarlyStopping(
-            monitor="val_loss",
-            patience=12,
+            monitor="val_accuracy",
+            patience=10,
             restore_best_weights=True,
             verbose=1,
         ),
+        tf.keras.callbacks.TerminateOnNaN(),
+        csv_logger,
     ]
+    ema_callback = None
+    if ema_decay is not None and ema_decay < 1.0:
+        ema_cls = getattr(tf.keras.callbacks, "ExponentialMovingAverage", None)
+        if ema_cls is None:
+            experimental_api = getattr(tf.keras.callbacks, "experimental", None)
+            if experimental_api is not None:
+                ema_cls = getattr(experimental_api, "ExponentialMovingAverage", None)
+        if ema_cls is None:
+            raise RuntimeError("ExponentialMovingAverage callback is not available in this TensorFlow build.")
+        ema_callback = ema_cls(decay=ema_decay, update_freq="batch")
+        callbacks.append(ema_callback)
 
     history = model.fit(
         train_ds,
@@ -389,18 +477,38 @@ def train_baseline_model(
         verbose=2,
     )
 
-    if os.path.exists(checkpoint_path):
-        model = tf.keras.models.load_model(checkpoint_path, custom_objects=CUSTOM_OBJECTS)
+    if ema_callback is not None:
+        ema_callback.assign_average_vars(model.variables)
 
-    test_accuracy = model.evaluate(test_ds, verbose=0)[1]
+    _recompute_batchnorm_statistics(model, bn_ds, max_batches=DEFAULT_BATCHNORM_PASSES)
+
+    test_metrics = model.evaluate(test_ds, verbose=0)
+    test_accuracy = float(test_metrics[1]) if isinstance(test_metrics, (list, tuple)) else float(test_metrics)
     model.save(output_path)
 
-    metadata = {
+    history_payload = _serialize_history(history.history)
+    TRAIN_HISTORY_PATH.write_text(json.dumps(history_payload, indent=2))
+
+    summary = {
         "model_path": output_path,
         "checkpoint_path": checkpoint_path,
-        "test_accuracy": float(test_accuracy),
-        "history": history.history,
-        "calibration_size": len(calibration_data[0]),
+        "test_accuracy": test_accuracy,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "optimizer": model.optimizer.get_config(),
+        "optimizer_name": optimizer_name,
+        "weight_decay": weight_decay,
+        "ema_decay": ema_decay,
+        "dataset_cache": str(DATASET_CACHE_PATH),
+        "calibration_file": str(CALIBRATION_EXPORT_PATH),
+        "history_file": str(TRAIN_HISTORY_PATH),
+        "calibration_size": int(len(calibration_data[0])),
+    }
+    BASELINE_REPORT_PATH.write_text(json.dumps(summary, indent=2))
+
+    metadata = {
+        **summary,
+        "history": history_payload,
     }
     return metadata
 
@@ -415,33 +523,78 @@ def _build_dataset(
     augment: bool = False,
     shuffle: bool = False,
     num_classes: Optional[int] = None,
+    drop_remainder: bool = False,
 ) -> tf.data.Dataset:
-    ds = tf.data.Dataset.from_tensor_slices((features, labels))
-    # If `num_classes` is set, convert sparse int labels to one-hot vectors so
-    # they work with `CategoricalCrossentropy` and categorical metrics.
+    features = np.asarray(features, dtype=np.float32)
+    labels_array = np.asarray(labels)
     if isinstance(num_classes, int):
-        def _to_one_hot(x, y):
-            # y may be shape (,) or (N,1) - ensure a 1D int tensor
-            y = tf.convert_to_tensor(y)
-            if len(y.shape) > 0 and y.shape[-1] == 1:
-                y = tf.squeeze(y, axis=-1)
-            return x, tf.one_hot(y, depth=num_classes)
-
-        ds = ds.map(_to_one_hot, num_parallel_calls=AUTOTUNE)
+        labels_array = tf.keras.utils.to_categorical(labels_array.reshape(-1), num_classes)
+        labels_array = labels_array.astype("float32")
+    ds = tf.data.Dataset.from_tensor_slices((features, labels_array))
     if shuffle:
-        ds = ds.shuffle(buffer_size=len(features), seed=1337, reshuffle_each_iteration=True)
+        buffer = min(len(features), 10000)
+        ds = ds.shuffle(buffer_size=buffer, seed=1337, reshuffle_each_iteration=True)
     if augment:
-        augmentation = tf.keras.Sequential(
-            [
-                tf.keras.layers.RandomFlip("horizontal"),
-                tf.keras.layers.RandomTranslation(0.125, 0.125, fill_mode='reflect'),
-                tf.keras.layers.RandomRotation(0.02),
-            ],
-            name="baseline_augmentation",
-        )
+        ds = ds.map(_augment_batch, num_parallel_calls=AUTOTUNE)
+    return ds.batch(batch_size, drop_remainder=drop_remainder).prefetch(AUTOTUNE)
 
-        def apply_aug(x, y):
-            return augmentation(x, training=True), y
 
-        ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
-    return ds.batch(batch_size).prefetch(AUTOTUNE)
+def _persist_dataset_cache(
+    cache_path: Path,
+    arrays: Dict[str, np.ndarray],
+    metadata: Dict[str, Any],
+) -> None:
+    payload = {key: value for key, value in arrays.items()}
+    payload["metadata"] = np.array(json.dumps(metadata))
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(cache_path, **payload)
+
+
+def _load_cached_dataset(cache_path: Path) -> Optional[Dict[str, Any]]:
+    if not cache_path.exists():
+        return None
+    try:
+        with np.load(cache_path, allow_pickle=False) as data:
+            metadata_raw = data["metadata"].item()
+            arrays = {key: data[key] for key in data.files if key != "metadata"}
+        metadata = json.loads(metadata_raw)
+    except Exception:
+        return None
+
+    for key, value in list(arrays.items()):
+        if key.startswith("x_") or key.startswith("calibration_x"):
+            arrays[key] = value.astype("float32")
+        else:
+            arrays[key] = value.astype("int32")
+    return {"arrays": arrays, "metadata": metadata}
+
+
+def _export_calibration_samples(calibration_data: Tuple[np.ndarray, np.ndarray]) -> Path:
+    CALIBRATION_EXPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        CALIBRATION_EXPORT_PATH,
+        x=calibration_data[0],
+        y=calibration_data[1],
+    )
+    return CALIBRATION_EXPORT_PATH
+
+
+def _recompute_batchnorm_statistics(
+    model: tf.keras.Model,
+    dataset: tf.data.Dataset,
+    max_batches: Optional[int] = None,
+) -> None:
+    bn_layers = [layer for layer in model.layers if isinstance(layer, tf.keras.layers.BatchNormalization)]
+    if not bn_layers:
+        return
+    for step, (images, _) in enumerate(dataset):
+        model(images, training=True)
+        if max_batches is not None and step + 1 >= max_batches:
+            break
+
+
+def _serialize_history(history: Dict[str, Any]) -> Dict[str, Any]:
+    serialized: Dict[str, Any] = {}
+    for key, values in history.items():
+        serialized[key] = [float(v) for v in values]
+    return serialized

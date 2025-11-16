@@ -18,19 +18,33 @@ pip install -r requirements.txt
 ```
 
 ### 3. Running the Pipeline
-The main execution pipeline is orchestrated in the `main.py` (or equivalent) script. This script will perform the following steps:
-1.  Prepare the CIFAR-100 dataset.
-2.  Train the baseline model (if not already trained).
-3.  Run all compression experiments (pruning, quantization, distillation).
-4.  Analyze the interactions between compression techniques.
-5.  Evaluate all compressed models.
-6.  Generate analysis reports, visualizations, and guidelines.
+The main execution pipeline is orchestrated in `main.py`. This script performs:
+1. Deterministic CIFAR-100 preparation (splits cached under `results/datasets/`).
+2. Baseline EfficientNet-B0 training (30 epochs, AdamW/SGDW + weight decay + EMA).
+3. Compression experiments (pruning, quantization, distillation).
+4. Interaction analyses, evaluations, and visualization exports.
 
-To run the full pipeline, execute:
+Key baseline controls are exposed via CLI flags:
+
+| Flag | Description | Default |
+| --- | --- | --- |
+| `--train-baseline` | Forces baseline retraining prior to compression runs | _off_ |
+| `--baseline-epochs` | Total training epochs (fixed to 30 per requirements) | `30` |
+| `--baseline-batch-size` | Training batch size with fixed shapes/drop remainder | `256` |
+| `--baseline-optimizer` | `adamw` or `sgdw` (both decoupled weight decay) | `adamw` |
+| `--baseline-lr` | Base LR used for cosine-restart schedule | `6e-4` |
+| `--baseline-weight-decay` | Weight decay for AdamW/SGDW | `1e-4` |
+| `--ema-decay` / `--disable-ema` | EMA smoothing for evaluation weights | `0.999` |
+
+Example end-to-end execution:
+
 ```bash
-python main.py 
+python main.py --train-baseline --baseline-optimizer adamw
 ```
-*Note: You will need to create a `main.py` to orchestrate the calls to the different modules as outlined in `ASS4.md`.*
+
+All training histories are written to `results/baseline_training_history.json` and summarized in `reports/baseline_summary.json`, while evaluation benchmarks land in `results/pipeline_evaluations.json`.
+
+The representative calibration set used for post-training quantization is persisted at `results/datasets/calibration_samples.npz`, ensuring Parts 2–4 consume identical inputs.
 
 #### Quick Run on Google Colab
 When prototyping in Colab, prefix shell commands with `!` (or `%cd` for directory changes). A minimal end-to-end session looks like:

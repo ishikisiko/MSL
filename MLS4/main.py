@@ -10,7 +10,9 @@ import tensorflow as tf
 
 from application_scenarios import ApplicationScenarioAnalysis
 from baseline_model import (
+    CALIBRATION_EXPORT_PATH,
     CUSTOM_OBJECTS,
+    DATASET_CACHE_PATH,
     DEFAULT_MODEL_PATH,
     create_baseline_model,
     prepare_compression_datasets,
@@ -48,6 +50,47 @@ def parse_args() -> argparse.Namespace:
         help="Batch size for evaluations.",
     )
     parser.add_argument(
+        "--baseline-batch-size",
+        type=int,
+        default=256,
+        help="Batch size for baseline training.",
+    )
+    parser.add_argument(
+        "--baseline-epochs",
+        type=int,
+        default=30,
+        help="Total epochs for baseline training.",
+    )
+    parser.add_argument(
+        "--baseline-optimizer",
+        choices=("adamw", "sgdw"),
+        default="adamw",
+        help="Optimizer to use for baseline training.",
+    )
+    parser.add_argument(
+        "--baseline-lr",
+        type=float,
+        default=6e-4,
+        help="Base learning rate for the baseline schedule.",
+    )
+    parser.add_argument(
+        "--baseline-weight-decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay applied to the baseline optimizer.",
+    )
+    parser.add_argument(
+        "--ema-decay",
+        type=float,
+        default=0.999,
+        help="EMA decay for baseline training (>=1 disables EMA).",
+    )
+    parser.add_argument(
+        "--disable-ema",
+        action="store_true",
+        help="Disable EMA tracking even if ema-decay is provided.",
+    )
+    parser.add_argument(
         "--report-dir",
         default="reports",
         help="Directory to store JSON summaries.",
@@ -81,9 +124,19 @@ def to_dataset(x, y, batch_size):
 def main() -> None:
     args = parse_args()
     baseline_path = Path(args.baseline_path)
+    ema_decay = None if args.disable_ema or args.ema_decay >= 1.0 else args.ema_decay
+    training_summary = None
 
     if args.train_baseline or not baseline_path.exists():
-        train_baseline_model(output_path=str(baseline_path))
+        training_summary = train_baseline_model(
+            epochs=args.baseline_epochs,
+            batch_size=args.baseline_batch_size,
+            output_path=str(baseline_path),
+            optimizer_name=args.baseline_optimizer,
+            base_learning_rate=args.baseline_lr,
+            weight_decay=args.baseline_weight_decay,
+            ema_decay=ema_decay,
+        )
 
     baseline_model = tf.keras.models.load_model(baseline_path, custom_objects=CUSTOM_OBJECTS)
 
@@ -94,7 +147,7 @@ def main() -> None:
         y_val,
         x_test,
         y_test,
-        _,
+        calibration_data,
     ) = prepare_compression_datasets()
     train_ds = to_dataset(x_train, y_train, args.batch_size)
     val_ds = to_dataset(x_val, y_val, args.batch_size)
@@ -220,6 +273,20 @@ def main() -> None:
 
     report_dir = Path(args.report_dir)
     report_dir.mkdir(parents=True, exist_ok=True)
+    results_dir = Path("results")
+    results_dir.mkdir(parents=True, exist_ok=True)
+    with open(results_dir / "pipeline_evaluations.json", "w", encoding="utf-8") as fh:
+        json.dump(evaluation_records, fh, indent=2)
+    with open(results_dir / "calibration_metadata.json", "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "calibration_size": int(len(calibration_data[0])),
+                "dataset_cache": str(DATASET_CACHE_PATH),
+                "calibration_file": str(CALIBRATION_EXPORT_PATH),
+            },
+            fh,
+            indent=2,
+        )
     summary = {
         "baseline_accuracy": baseline_accuracy,
         "combinations": combinations,
@@ -228,6 +295,9 @@ def main() -> None:
         "failures": failures,
         "scenarios": scenario_results,
         "evaluations": evaluation_records,
+        "baseline_training": training_summary,
+        "dataset_cache": str(DATASET_CACHE_PATH),
+        "calibration_file": str(CALIBRATION_EXPORT_PATH),
     }
     with open(report_dir / "pipeline_summary.json", "w", encoding="utf-8") as fh:
         json.dump(summary, fh, indent=2)
