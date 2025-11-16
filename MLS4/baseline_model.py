@@ -125,11 +125,17 @@ def create_baseline_model(
 
     model = tf.keras.Model(inputs, outputs, name="cifar100_resnet")
     optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4)
+    # Use CategoricalCrossentropy with label smoothing. CIFAR100 labels are
+    # provided as sparse integer indices; we convert them to one-hot in the
+    # dataset pipeline when calling `train_baseline_model` so this loss can be
+    # used. This avoids the `TypeError` on some TF versions where
+    # `SparseCategoricalCrossentropy` doesn't accept the `label_smoothing`
+    # argument.
     model.compile(
         optimizer=optimizer,
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=0.05),
+        loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.05),
         metrics=[
-            tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
+            tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
             tf.keras.metrics.TopKCategoricalAccuracy(k=5, name="top5"),
         ],
     )
@@ -205,11 +211,16 @@ def train_baseline_model(
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    train_ds = _build_dataset(x_train, y_train, batch_size, augment=True, shuffle=True)
-    val_ds = _build_dataset(x_val, y_val, batch_size)
-    test_ds = _build_dataset(x_test, y_test, batch_size)
-
+    # Instantiate model first so we can perform dataset label conversion
+    # (one-hot) consistent with `CategoricalCrossentropy` which expects
+    # categorical labels.
     model = create_baseline_model()
+
+    train_ds = _build_dataset(
+        x_train, y_train, batch_size, augment=True, shuffle=True, num_classes=model.output_shape[-1]
+    )
+    val_ds = _build_dataset(x_val, y_val, batch_size, num_classes=model.output_shape[-1])
+    test_ds = _build_dataset(x_test, y_test, batch_size, num_classes=model.output_shape[-1])
 
     Path(os.path.dirname(checkpoint_path) or ".").mkdir(parents=True, exist_ok=True)
     Path(os.path.dirname(output_path) or ".").mkdir(parents=True, exist_ok=True)
@@ -268,8 +279,20 @@ def _build_dataset(
     batch_size: int,
     augment: bool = False,
     shuffle: bool = False,
+    num_classes: Optional[int] = None,
 ) -> tf.data.Dataset:
     ds = tf.data.Dataset.from_tensor_slices((features, labels))
+    # If `num_classes` is set, convert sparse int labels to one-hot vectors so
+    # they work with `CategoricalCrossentropy` and categorical metrics.
+    if isinstance(num_classes, int):
+        def _to_one_hot(x, y):
+            # y may be shape (,) or (N,1) - ensure a 1D int tensor
+            y = tf.convert_to_tensor(y)
+            if len(y.shape) > 0 and y.shape[-1] == 1:
+                y = tf.squeeze(y, axis=-1)
+            return x, tf.one_hot(y, depth=num_classes)
+
+        ds = ds.map(_to_one_hot, num_parallel_calls=AUTOTUNE)
     if shuffle:
         ds = ds.shuffle(buffer_size=len(features), seed=1337, reshuffle_each_iteration=True)
     if augment:
