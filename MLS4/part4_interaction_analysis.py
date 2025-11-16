@@ -7,6 +7,12 @@ import numpy as np
 import tf_compat  # noqa: F401  # ensure TensorFlow uses legacy keras API
 import tensorflow as tf
 
+from baseline_model import (
+    AdaptiveCategoricalAccuracy,
+    AdaptiveCategoricalCrossentropy,
+    AdaptiveTopKCategoricalAccuracy,
+    CUSTOM_OBJECTS,
+)
 from part2_quantization import QuantizationPipeline
 
 
@@ -36,6 +42,39 @@ class CompressionInteractionAnalyzer:
         self.baseline_model = baseline_model
         self.test_dataset = evaluation_dataset
         self.interaction_results: Dict[str, Any] = {}
+        self._num_classes = (
+            baseline_model.output_shape[-1]
+            if baseline_model.output_shape and baseline_model.output_shape[-1]
+            else 100
+        )
+
+        optimizer = getattr(baseline_model, "optimizer", None)
+        loss_obj = getattr(baseline_model, "loss", None)
+        metric_stack = getattr(baseline_model, "metrics", None)
+
+        self._optimizer_config = tf.keras.optimizers.serialize(
+            optimizer if optimizer is not None else tf.keras.optimizers.Adam(learning_rate=1e-3)
+        )
+        default_loss = AdaptiveCategoricalCrossentropy(num_classes=self._num_classes, label_smoothing=0.1)
+        try:
+            self._loss_config = tf.keras.losses.serialize(loss_obj if loss_obj is not None else default_loss)
+        except Exception:
+            self._loss_config = tf.keras.losses.serialize(default_loss)
+
+        if metric_stack:
+            serialized_metrics: List[Any] = []
+            for metric in metric_stack:
+                try:
+                    serialized_metrics.append(tf.keras.metrics.serialize(metric))
+                except Exception:
+                    serialized_metrics.append(metric.name if hasattr(metric, "name") else "accuracy")
+            self._metric_configs = serialized_metrics
+        else:
+            fallback_metrics = [
+                AdaptiveCategoricalAccuracy(num_classes=self._num_classes, name="accuracy"),
+                AdaptiveTopKCategoricalAccuracy(num_classes=self._num_classes, k=5, name="top5"),
+            ]
+            self._metric_configs = [tf.keras.metrics.serialize(metric) for metric in fallback_metrics]
 
     # ------------------------------------------------------------------ #
     # Combination experiments
@@ -268,6 +307,7 @@ class CompressionInteractionAnalyzer:
             model = self._extract_model(payload)
             if model is None:
                 continue
+            model = self._ensure_compiled(model)
             accuracy = payload.get("accuracy") if isinstance(payload, dict) else None
             if accuracy is None:
                 accuracy = float(model.evaluate(self.test_dataset, verbose=0)[1])  # type: ignore[index]
@@ -293,7 +333,8 @@ class CompressionInteractionAnalyzer:
         model: tf.keras.Model,
         notes: str,
     ) -> Dict:
-        metrics = model.evaluate(self.test_dataset, verbose=0)
+        compiled_model = self._ensure_compiled(model)
+        metrics = compiled_model.evaluate(self.test_dataset, verbose=0)
         accuracy = float(metrics[1]) if isinstance(metrics, list) and len(metrics) > 1 else float(metrics)
         size_bits = sum(w.numpy().size * 32 for w in model.trainable_weights)
         compression_ratio = (
@@ -331,7 +372,7 @@ class CompressionInteractionAnalyzer:
                 mask = np.abs(weight) >= threshold
                 pruned.append(weight * mask)
             layer.set_weights(pruned)
-        return clone
+        return self._ensure_compiled(clone)
 
     def _ordering_sensitivity(
         self,
@@ -384,3 +425,49 @@ class CompressionInteractionAnalyzer:
         if prefer == "latency":
             return min(frontier, key=lambda item: item["x"])
         return max(frontier, key=lambda item: item["y"])
+
+    # ------------------------------------------------------------------ #
+    # Model compilation helpers
+    # ------------------------------------------------------------------ #
+    def _ensure_compiled(self, model: tf.keras.Model) -> tf.keras.Model:
+        if getattr(model, "optimizer", None) is not None and getattr(model, "compiled_loss", None) is not None:
+            return model
+
+        optimizer = self._build_optimizer()
+        loss = self._build_loss()
+        metrics = self._build_metrics()
+        model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+        return model
+
+    def _build_optimizer(self) -> tf.keras.optimizers.Optimizer:
+        try:
+            return tf.keras.optimizers.deserialize(self._optimizer_config)
+        except Exception:
+            return tf.keras.optimizers.Adam(learning_rate=1e-3)
+
+    def _build_loss(self) -> tf.keras.losses.Loss:
+        try:
+            return tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+        except Exception:
+            return AdaptiveCategoricalCrossentropy(num_classes=self._num_classes, label_smoothing=0.1)
+
+    def _build_metrics(self) -> List[Any]:
+        metrics: List[Any] = []
+        for config in self._metric_configs:
+            if isinstance(config, str):
+                metrics.append(config)
+                continue
+            try:
+                metrics.append(tf.keras.metrics.deserialize(config, custom_objects=CUSTOM_OBJECTS))
+            except Exception:
+                metrics.extend(self._default_metrics())
+                break
+        if not metrics:
+            metrics = self._default_metrics()
+        return metrics
+
+    def _default_metrics(self) -> List[tf.keras.metrics.Metric]:
+        return [
+            AdaptiveCategoricalAccuracy(num_classes=self._num_classes, name="accuracy"),
+            AdaptiveTopKCategoricalAccuracy(num_classes=self._num_classes, k=5, name="top5"),
+        ]
