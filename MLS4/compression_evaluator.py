@@ -44,7 +44,8 @@ class CompressionEvaluator:
         Comprehensive benchmarking of compressed models.
         """
 
-        accuracy = float(model.evaluate(test_data, verbose=0)[1])  # type: ignore[index]
+        # Use manual accuracy calculation to avoid custom metric signature conflicts
+        accuracy = self._compute_accuracy_manual(model, test_data)
         model_size_mb = self._estimate_model_size(model)
         latency_single, latency_batch = self._measure_latency(model, test_data)
         peak_memory = self._estimate_activation_memory(model, test_data)
@@ -116,7 +117,7 @@ class CompressionEvaluator:
         Evaluate robustness of compressed models under noise/corruption.
         """
 
-        clean_accuracy = float(compressed_model.evaluate(test_data, verbose=0)[1])  # type: ignore[index]
+        clean_accuracy = self._compute_accuracy_manual(compressed_model, test_data)
 
         corrupted = test_data.map(
             lambda x, y: (
@@ -128,9 +129,7 @@ class CompressionEvaluator:
                 y,
             )
         )
-        corrupted_accuracy = float(
-            compressed_model.evaluate(corrupted, verbose=0)[1]
-        )  # type: ignore[index]
+        corrupted_accuracy = self._compute_accuracy_manual(compressed_model, corrupted)
 
         return {
             "clean_accuracy": clean_accuracy,
@@ -257,3 +256,33 @@ class CompressionEvaluator:
     def _compute_compression_ratio(self, model_size_mb: float) -> float:
         baseline_size = self.baseline_metrics.get("model_size_mb", model_size_mb)
         return baseline_size / model_size_mb if model_size_mb else 1.0
+
+    def _compute_accuracy_manual(
+        self,
+        model: tf.keras.Model,
+        dataset: tf.data.Dataset,
+    ) -> float:
+        """
+        Manually compute accuracy to avoid custom metric signature conflicts.
+        """
+        correct_predictions = 0
+        total_samples = 0
+
+        for batch_x, batch_y in dataset:
+            predictions = model(batch_x, training=False)
+            pred_labels = tf.argmax(predictions, axis=-1)
+
+            # Handle both one-hot and sparse labels
+            if len(batch_y.shape) > 1 and batch_y.shape[-1] > 1:
+                # One-hot labels
+                true_labels = tf.argmax(batch_y, axis=-1)
+            else:
+                # Sparse labels
+                true_labels = tf.cast(tf.squeeze(batch_y), tf.int64)
+
+            correct_predictions += tf.reduce_sum(
+                tf.cast(tf.equal(pred_labels, true_labels), tf.int32)
+            ).numpy()
+            total_samples += batch_x.shape[0]
+
+        return float(correct_predictions / total_samples) if total_samples > 0 else 0.0
