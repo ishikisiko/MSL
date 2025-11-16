@@ -310,7 +310,7 @@ class CompressionInteractionAnalyzer:
             model = self._ensure_compiled(model)
             accuracy = payload.get("accuracy") if isinstance(payload, dict) else None
             if accuracy is None:
-                accuracy = float(model.evaluate(self.test_dataset, verbose=0)[1])  # type: ignore[index]
+                accuracy = self._evaluate_accuracy(model)
             if accuracy > best_accuracy:
                 best_accuracy = accuracy
                 best_model = model
@@ -334,8 +334,7 @@ class CompressionInteractionAnalyzer:
         notes: str,
     ) -> Dict:
         compiled_model = self._ensure_compiled(model)
-        metrics = compiled_model.evaluate(self.test_dataset, verbose=0)
-        accuracy = float(metrics[1]) if isinstance(metrics, list) and len(metrics) > 1 else float(metrics)
+        accuracy = self._evaluate_accuracy(compiled_model)
         size_bits = sum(w.numpy().size * 32 for w in model.trainable_weights)
         compression_ratio = (
             sum(w.numpy().size * 32 for w in self.baseline_model.trainable_weights)
@@ -471,3 +470,36 @@ class CompressionInteractionAnalyzer:
             AdaptiveCategoricalAccuracy(num_classes=self._num_classes, name="accuracy"),
             AdaptiveTopKCategoricalAccuracy(num_classes=self._num_classes, k=5, name="top5"),
         ]
+
+    def _evaluate_accuracy(self, model: tf.keras.Model) -> float:
+        """Evaluate accuracy with a fallback for sample_weight retracing bugs."""
+
+        try:
+            metrics = model.evaluate(self.test_dataset, verbose=0)
+        except (TypeError, ValueError) as exc:
+            tf.get_logger().warning(
+                "Falling back to manual accuracy computation during combination analysis: %s",
+                exc,
+            )
+            return self._manual_accuracy(model)
+
+        if isinstance(metrics, list):
+            if len(metrics) > 1:
+                return float(metrics[1])
+            return float(metrics[0])
+        return float(metrics)
+
+    def _manual_accuracy(self, model: tf.keras.Model) -> float:
+        total_correct = 0
+        total_samples = 0
+        for features, labels in self.test_dataset:
+            logits = model(features, training=False)
+            preds = tf.argmax(logits, axis=-1)
+            if labels.shape.rank and labels.shape[-1] == self._num_classes:
+                true = tf.argmax(labels, axis=-1)
+            else:
+                true = tf.reshape(tf.cast(labels, tf.int64), [-1])
+            matches = tf.equal(preds, true)
+            total_correct += int(tf.reduce_sum(tf.cast(matches, tf.int32)))
+            total_samples += int(tf.shape(preds)[0])
+        return float(total_correct / total_samples) if total_samples else 0.0
