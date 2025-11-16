@@ -112,6 +112,27 @@ class PruningComparator:
             pruning_schedule=schedule,
         )
 
+        # The pruning wrapper returns a new model which requires explicit
+        # compilation before training. Reuse optimizer/loss/metrics from the
+        # cloned (compiled) model but allow learning rate overrides.
+        optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
+        if learning_rate is not None and hasattr(optimizer, "learning_rate"):
+            optimizer.learning_rate = learning_rate
+
+        loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+
+        metrics = []
+        for metric_config in self._metric_configs:
+            if isinstance(metric_config, str):
+                metrics.append(metric_config)
+            else:
+                try:
+                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                except Exception:
+                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+
+        pruned_model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
         train_ds = self._resolve_dataset(
             dataset=train_data,
             fallback_split="train",
@@ -393,6 +414,25 @@ class PruningComparator:
                 model,
                 pruning_schedule=schedule,
             )
+
+            # Ensure the pruning-wrapped model is compiled for training
+            optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
+            if learning_rate is not None and hasattr(optimizer, "learning_rate"):
+                optimizer.learning_rate = learning_rate
+
+            loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+
+            metrics = []
+            for metric_config in self._metric_configs:
+                if isinstance(metric_config, str):
+                    metrics.append(metric_config)
+                else:
+                    try:
+                        metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                    except Exception:
+                        metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+
+            pruned_model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
             history = pruned_model.fit(
                 train_ds,
