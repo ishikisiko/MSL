@@ -180,12 +180,19 @@ class CompressionEvaluator:
         sample = next(iter(test_data))[0]
         activation_sizes = []
         for layer in model.layers:
-            if not layer.output_shape:
+            output_shape = getattr(layer, "output_shape", None)
+            if output_shape is None and hasattr(layer, "batch_input_shape"):
+                output_shape = layer.batch_input_shape
+            if output_shape is None and hasattr(layer, "compute_output_shape"):
+                try:
+                    output_shape = layer.compute_output_shape(sample.shape)
+                except Exception:  # pragma: no cover - defensive fallback for custom layers
+                    output_shape = None
+            if output_shape is None:
                 continue
-            output_shape = layer.output_shape
             if isinstance(output_shape, list):
                 output_shape = output_shape[0]
-            if None in output_shape:
+            if output_shape is None or None in output_shape:
                 continue
             size = np.prod(output_shape) * 4 / (1024 * 1024)
             activation_sizes.append(float(size))
