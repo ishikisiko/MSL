@@ -54,9 +54,22 @@ class PruningComparator:
         )
         self._loss_config = tf.keras.losses.serialize(loss_obj)
         if getattr(self.base_model, "metrics", None):
-            self._metric_configs = [
-                tf.keras.metrics.serialize(metric) for metric in self.base_model.metrics
-            ]
+            metric_configs = []
+            for metric in self.base_model.metrics:
+                try:
+                    metric_configs.append(tf.keras.metrics.serialize(metric))
+                    continue
+                except Exception:
+                    identifier = getattr(metric, "name", None) or getattr(metric, "_name", None)
+                    if identifier:
+                        metric_configs.append(identifier)
+                        continue
+                metric_configs.append(
+                    tf.keras.metrics.serialize(
+                        tf.keras.metrics.CategoricalAccuracy(name="accuracy")
+                    )
+                )
+            self._metric_configs = metric_configs
         else:
             self._metric_configs = [
                 tf.keras.metrics.serialize(
