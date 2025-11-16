@@ -464,10 +464,9 @@ def train_baseline_model(
             experimental_api = getattr(tf.keras.callbacks, "experimental", None)
             if experimental_api is not None:
                 ema_cls = getattr(experimental_api, "ExponentialMovingAverage", None)
-        if ema_cls is None:
-            raise RuntimeError("ExponentialMovingAverage callback is not available in this TensorFlow build.")
-        ema_callback = ema_cls(decay=ema_decay, update_freq="batch")
-        callbacks.append(ema_callback)
+        if ema_cls is not None:
+            ema_callback = ema_cls(decay=ema_decay, update_freq="batch")
+            callbacks.append(ema_callback)
 
     history = model.fit(
         train_ds,
