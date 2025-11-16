@@ -9,7 +9,7 @@ import numpy as np
 import tf_compat  # noqa: F401  # enforce legacy tf.keras mode for compatibility
 import tensorflow as tf
 
-from baseline_model import prepare_compression_datasets
+from baseline_model import CUSTOM_OBJECTS, prepare_compression_datasets
 
 
 AUTOTUNE = tf.data.AUTOTUNE
@@ -449,11 +449,16 @@ class QuantizationPipeline:
         clone.set_weights(self.base_model.get_weights())
 
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-        loss = tf.keras.losses.deserialize(self._loss_config)
-        metrics = [
-            tf.keras.metrics.deserialize(metric_config)
-            for metric_config in self._metric_configs
-        ]
+        loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+        metrics = []
+        for metric_config in self._metric_configs:
+            if isinstance(metric_config, str):
+                metrics.append(metric_config)
+            else:
+                try:
+                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                except Exception:
+                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
         clone.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
         for layer in self._quantizable_layers(clone):
@@ -470,11 +475,16 @@ class QuantizationPipeline:
         clone = tf.keras.models.clone_model(self.base_model)
         clone.set_weights(self.base_model.get_weights())
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-        loss = tf.keras.losses.deserialize(self._loss_config)
-        metrics = [
-            tf.keras.metrics.deserialize(metric_config)
-            for metric_config in self._metric_configs
-        ]
+        loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+        metrics = []
+        for metric_config in self._metric_configs:
+            if isinstance(metric_config, str):
+                metrics.append(metric_config)
+            else:
+                try:
+                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                except Exception:
+                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
         clone.compile(optimizer=optimizer, loss=loss, metrics=metrics)
 
         for layer in self._quantizable_layers(clone):
