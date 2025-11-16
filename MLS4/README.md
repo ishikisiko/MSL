@@ -35,7 +35,8 @@ python main.py
 #### Quick Run on Google Colab
 When prototyping in Colab, prefix shell commands with `!` (or `%cd` for directory changes). A minimal end-to-end session looks like:
 ```bash
-!git clone <repo-url> MLS4
+!git clone --depth 1 https://github.com/ishikisiko/MSL temp_repo
+!cp -r temp_repo/MLS4 . && rm -rf temp_repo
 %cd MLS4
 !pip install -r requirements.txt
 !python main.py --train-baseline

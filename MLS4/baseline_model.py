@@ -95,7 +95,7 @@ def create_baseline_model(
         return max(16, int(filters * width_multiplier))
 
     inputs = tf.keras.layers.Input(shape=input_shape)
-    x = tf.keras.layers.Rescaling(1.0 / 255.0)(inputs)
+    x = inputs
     x = tf.keras.layers.Conv2D(
         scaled_filters(64),
         kernel_size=3,
@@ -127,7 +127,7 @@ def create_baseline_model(
     optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4)
     model.compile(
         optimizer=optimizer,
-        loss=tf.keras.losses.SparseCategoricalCrossentropy(),
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(label_smoothing=0.05),
         metrics=[
             tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
             tf.keras.metrics.TopKCategoricalAccuracy(k=5, name="top5"),
@@ -158,12 +158,20 @@ def prepare_compression_datasets(
     x_train = (x_train - mean) / std
     x_test = (x_test - mean) / std
 
-    x_val = x_train[-val_size:]
-    y_val = y_train[-val_size:]
-    x_train = x_train[:-val_size]
-    y_train = y_train[:-val_size]
-
     rng = np.random.default_rng(seed)
+    indices = rng.permutation(len(x_train))
+    x_train = x_train[indices]
+    y_train = y_train[indices]
+
+    if val_size <= 0 or val_size >= len(x_train):
+        raise ValueError("val_size must be between 1 and len(x_train) - 1")
+    x_val = x_train[:val_size]
+    y_val = y_train[:val_size]
+    x_train = x_train[val_size:]
+    y_train = y_train[val_size:]
+
+    if calibration_size >= len(x_train):
+        raise ValueError("calibration_size must be smaller than remaining training set")
     calibration_indices = rng.choice(len(x_train), size=calibration_size, replace=False)
     calibration_data = (x_train[calibration_indices], y_train[calibration_indices])
 
@@ -171,7 +179,7 @@ def prepare_compression_datasets(
 
 
 def train_baseline_model(
-    epochs: int = 60,
+    epochs: int = 30,
     batch_size: int = 128,
     output_path: str = DEFAULT_MODEL_PATH,
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
@@ -270,7 +278,10 @@ def _build_dataset(
                 tf.keras.layers.RandomFlip("horizontal"),
                 tf.keras.layers.RandomTranslation(0.1, 0.1),
                 tf.keras.layers.RandomRotation(0.05),
-            ]
+                tf.keras.layers.RandomZoom((-0.1, 0.1), (-0.1, 0.1)),
+                tf.keras.layers.RandomContrast(0.1),
+            ],
+            name="baseline_augmentation",
         )
 
         def apply_aug(x, y):
