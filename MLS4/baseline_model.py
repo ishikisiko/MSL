@@ -122,9 +122,9 @@ class AdaptiveCategoricalAccuracy(tf.keras.metrics.CategoricalAccuracy):
         super().__init__(name=name, **kwargs)
         self.num_classes = num_classes
 
-    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: Optional[tf.Tensor] = None) -> None:
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight=None) -> None:
         y_true = _ensure_one_hot_labels(y_true, self.num_classes, y_pred.dtype)
-        return super().update_state(y_true, y_pred, sample_weight)
+        return super().update_state(y_true, y_pred, sample_weight=sample_weight)
 
     def get_config(self) -> Dict[str, Any]:
         config = super().get_config()
@@ -140,9 +140,9 @@ class AdaptiveTopKCategoricalAccuracy(tf.keras.metrics.TopKCategoricalAccuracy):
         super().__init__(k=k, name=name, **kwargs)
         self.num_classes = num_classes
 
-    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: Optional[tf.Tensor] = None) -> None:
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight=None) -> None:
         y_true = _ensure_one_hot_labels(y_true, self.num_classes, y_pred.dtype)
-        return super().update_state(y_true, y_pred, sample_weight)
+        return super().update_state(y_true, y_pred, sample_weight=sample_weight)
 
     def get_config(self) -> Dict[str, Any]:
         config = super().get_config()
@@ -160,7 +160,7 @@ CUSTOM_OBJECTS: Dict[str, Any] = {
 def create_baseline_model(
     input_shape: Tuple[int, int, int] = (32, 32, 3),
     num_classes: int = 100,
-    dropout_rate: float = 0.2,
+    dropout_rate: float = 0.3,
     width_multiplier: float = 1.0,
 ) -> tf.keras.Model:
     """
@@ -252,12 +252,12 @@ def create_baseline_model(
     )(x)
 
     model = tf.keras.Model(inputs, outputs, name="cifar100_resnet")
-    optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4)
+    optimizer = tf.keras.optimizers.AdamW(learning_rate=5e-4, weight_decay=5e-5)
     # Compile with an adaptive loss/metric stack so evaluations tolerate either
     # sparse integer labels or one-hot vectors while preserving label smoothing.
     model.compile(
         optimizer=optimizer,
-        loss=AdaptiveCategoricalCrossentropy(num_classes=num_classes, label_smoothing=0.05),
+        loss=AdaptiveCategoricalCrossentropy(num_classes=num_classes, label_smoothing=0.1),
         metrics=[
             AdaptiveCategoricalAccuracy(num_classes=num_classes, name="accuracy"),
             AdaptiveTopKCategoricalAccuracy(num_classes=num_classes, k=5, name="top5"),
@@ -309,8 +309,8 @@ def prepare_compression_datasets(
 
 
 def train_baseline_model(
-    epochs: int = 30,
-    batch_size: int = 128,
+    epochs: int = 50,
+    batch_size: int = 256,
     output_path: str = DEFAULT_MODEL_PATH,
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
     seed: int = 42,
@@ -349,24 +349,35 @@ def train_baseline_model(
     Path(os.path.dirname(checkpoint_path) or ".").mkdir(parents=True, exist_ok=True)
     Path(os.path.dirname(output_path) or ".").mkdir(parents=True, exist_ok=True)
 
+    # Learning rate warmup schedule
+    def lr_schedule(epoch, lr):
+        warmup_epochs = 5
+        if epoch < warmup_epochs:
+            return 5e-4 * (epoch + 1) / warmup_epochs
+        return lr
+
     callbacks = [
+        tf.keras.callbacks.LearningRateScheduler(lr_schedule, verbose=0),
         tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_path,
             monitor="val_accuracy",
             mode="max",
             save_best_only=True,
             save_weights_only=False,
+            verbose=1,
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_accuracy",
+            monitor="val_loss",
             factor=0.5,
-            patience=5,
-            min_lr=1e-5,
+            patience=3,
+            min_lr=1e-6,
+            verbose=1,
         ),
         tf.keras.callbacks.EarlyStopping(
-            monitor="val_accuracy",
-            patience=10,
+            monitor="val_loss",
+            patience=12,
             restore_best_weights=True,
+            verbose=1,
         ),
     ]
 
@@ -423,10 +434,8 @@ def _build_dataset(
         augmentation = tf.keras.Sequential(
             [
                 tf.keras.layers.RandomFlip("horizontal"),
-                tf.keras.layers.RandomTranslation(0.1, 0.1),
-                tf.keras.layers.RandomRotation(0.05),
-                tf.keras.layers.RandomZoom((-0.1, 0.1), (-0.1, 0.1)),
-                tf.keras.layers.RandomContrast(0.1),
+                tf.keras.layers.RandomTranslation(0.125, 0.125, fill_mode='reflect'),
+                tf.keras.layers.RandomRotation(0.02),
             ],
             name="baseline_augmentation",
         )
