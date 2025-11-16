@@ -163,7 +163,7 @@ class PruningComparator:
             verbose=2,
         )
 
-        stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+        stripped_model = self._strip_and_compile(pruned_model)
         final_accuracy = self._evaluate_accuracy(stripped_model, val_ds)
         layer_sparsity = self._compute_layer_sparsity(stripped_model)
 
@@ -442,7 +442,7 @@ class PruningComparator:
                 verbose=2,
             )
 
-            stripped = tfmot.sparsity.keras.strip_pruning(pruned_model)
+            stripped = self._strip_and_compile(pruned_model)
             accuracy = self._evaluate_accuracy(stripped, val_ds)
 
             new_masks = []
@@ -504,6 +504,32 @@ class PruningComparator:
             metrics=metrics,
         )
         return model_clone
+
+    def _strip_and_compile(
+        self,
+        pruned_model: tf.keras.Model,
+    ) -> tf.keras.Model:
+        """Strip pruning wrappers and recompile the model."""
+        stripped_model = tfmot.sparsity.keras.strip_pruning(pruned_model)
+        
+        optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
+        loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+        metrics = []
+        for metric_config in self._metric_configs:
+            if isinstance(metric_config, str):
+                metrics.append(metric_config)
+            else:
+                try:
+                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                except Exception:
+                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+        
+        stripped_model.compile(
+            optimizer=optimizer,
+            loss=loss,
+            metrics=metrics,
+        )
+        return stripped_model
 
     def _prepare_default_datasets(
         self,
