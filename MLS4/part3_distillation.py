@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import tf_compat  # noqa: F401  # align TensorFlow with tfmot expectations
 import tensorflow as tf
 
 from baseline_model import prepare_compression_datasets

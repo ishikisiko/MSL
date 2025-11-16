@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import tf_compat  # noqa: F401  # keep tfmot compatible with newer TensorFlow builds
 import tensorflow as tf
 
 

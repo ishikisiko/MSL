@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
+import tf_compat  # noqa: F401  # ensure legacy tf.keras before TensorFlow import
 import tensorflow as tf
 
 from application_scenarios import ApplicationScenarioAnalysis

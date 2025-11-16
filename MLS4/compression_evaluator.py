@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
+import tf_compat  # noqa: F401  # maintain tfmot compatibility before TensorFlow import
 import tensorflow as tf
 
 

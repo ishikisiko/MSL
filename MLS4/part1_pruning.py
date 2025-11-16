@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import tf_compat  # noqa: F401  # force tf.keras legacy mode for tfmot pruning
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
+import tf_compat  # noqa: F401  # enforce legacy tf.keras mode for compatibility
 import tensorflow as tf
 
 from baseline_model import prepare_compression_datasets

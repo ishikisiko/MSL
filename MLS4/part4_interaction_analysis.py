@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+import tf_compat  # noqa: F401  # ensure TensorFlow uses legacy keras API
 import tensorflow as tf
 
 from part2_quantization import QuantizationPipeline
