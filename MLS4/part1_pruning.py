@@ -444,11 +444,18 @@ class PruningComparator:
         if learning_rate is not None and hasattr(optimizer, "learning_rate"):
             optimizer.learning_rate = learning_rate
 
-        loss = tf.keras.losses.deserialize(self._loss_config)
-        metrics = [
-            tf.keras.metrics.deserialize(metric_config)
-            for metric_config in self._metric_configs
-        ]
+        loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+        metrics = []
+        for metric_config in self._metric_configs:
+            if isinstance(metric_config, str):
+                # Fallback from serialization errors - use string identifier
+                metrics.append(metric_config)
+            else:
+                try:
+                    metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                except Exception:
+                    # If deserialization fails, use categorical accuracy as safe default
+                    metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
 
         model_clone.compile(
             optimizer=optimizer,
