@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -27,6 +27,133 @@ class DatasetSplits:
     train_size: int
     val_size: int
     test_size: int
+
+
+def _to_int_labels(labels: tf.Tensor) -> tf.Tensor:
+    if not labels.dtype.is_integer:
+        labels = tf.cast(tf.round(labels), tf.int32)
+    else:
+        labels = tf.cast(labels, tf.int32)
+    return labels
+
+
+def _ensure_one_hot_labels(y_true: tf.Tensor, num_classes: int, dtype: tf.dtypes.DType) -> tf.Tensor:
+    """Convert sparse or 1-hot labels to a consistent dense 1-hot representation."""
+
+    y_true = tf.convert_to_tensor(y_true)
+    dtype = tf.as_dtype(dtype)
+    static_rank = y_true.shape.rank
+    static_last_dim = y_true.shape[-1] if static_rank and static_rank > 0 else None
+
+    if static_rank is not None and static_rank > 0 and static_last_dim == num_classes:
+        return tf.cast(y_true, dtype)
+
+    if static_rank is not None and static_rank > 0 and static_last_dim == 1:
+        squeezed = tf.squeeze(y_true, axis=-1)
+        return tf.one_hot(_to_int_labels(squeezed), depth=num_classes, dtype=dtype)
+
+    if static_rank == 0:
+        y_true = tf.expand_dims(y_true, axis=0)
+        return tf.one_hot(_to_int_labels(y_true), depth=num_classes, dtype=dtype)
+
+    if static_rank is not None:
+        return tf.one_hot(_to_int_labels(y_true), depth=num_classes, dtype=dtype)
+
+    # Fallback for tensors with dynamic shape information.
+    shape = tf.shape(y_true)
+    last_dim = shape[-1]
+
+    def cast_as_one_hot() -> tf.Tensor:
+        return tf.cast(y_true, dtype)
+
+    def convert_sparse() -> tf.Tensor:
+        def squeeze_if_needed() -> tf.Tensor:
+            return tf.squeeze(y_true, axis=-1)
+
+        def identity() -> tf.Tensor:
+            return y_true
+
+        adjusted = tf.cond(tf.equal(last_dim, 1), squeeze_if_needed, identity)
+        return tf.one_hot(_to_int_labels(adjusted), depth=num_classes, dtype=dtype)
+
+    return tf.cond(tf.equal(last_dim, num_classes), cast_as_one_hot, convert_sparse)
+
+
+@tf.keras.utils.register_keras_serializable(package="mls4")
+class AdaptiveCategoricalCrossentropy(tf.keras.losses.Loss):
+    """Cross-entropy that accepts either sparse or one-hot labels with smoothing."""
+
+    def __init__(self, num_classes: int, label_smoothing: float = 0.0, **kwargs) -> None:
+        name = kwargs.pop("name", "adaptive_categorical_crossentropy")
+        super().__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+        self.label_smoothing = float(label_smoothing)
+
+    def call(self, y_true: tf.Tensor, y_pred: tf.Tensor) -> tf.Tensor:
+        y_true = _ensure_one_hot_labels(y_true, self.num_classes, y_pred.dtype)
+        if self.label_smoothing:
+            smoothing = tf.cast(self.label_smoothing, y_pred.dtype)
+            classes = tf.cast(self.num_classes, y_pred.dtype)
+            y_true = y_true * (1.0 - smoothing) + smoothing / classes
+
+        y_pred = tf.clip_by_value(
+            y_pred,
+            clip_value_min=tf.keras.backend.epsilon(),
+            clip_value_max=1.0 - tf.keras.backend.epsilon(),
+        )
+        per_example_loss = -tf.reduce_sum(y_true * tf.math.log(y_pred), axis=-1)
+        return per_example_loss
+
+    def get_config(self) -> Dict[str, Any]:
+        config = super().get_config()
+        config.update({
+            "num_classes": self.num_classes,
+            "label_smoothing": self.label_smoothing,
+        })
+        return config
+
+
+@tf.keras.utils.register_keras_serializable(package="mls4")
+class AdaptiveCategoricalAccuracy(tf.keras.metrics.CategoricalAccuracy):
+    """Categorical accuracy metric resilient to sparse labels."""
+
+    def __init__(self, num_classes: int, name: str = "accuracy", **kwargs) -> None:
+        super().__init__(name=name, **kwargs)
+        self.num_classes = num_classes
+
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: Optional[tf.Tensor] = None) -> None:
+        y_true = _ensure_one_hot_labels(y_true, self.num_classes, y_pred.dtype)
+        return super().update_state(y_true, y_pred, sample_weight)
+
+    def get_config(self) -> Dict[str, Any]:
+        config = super().get_config()
+        config.update({"num_classes": self.num_classes})
+        return config
+
+
+@tf.keras.utils.register_keras_serializable(package="mls4")
+class AdaptiveTopKCategoricalAccuracy(tf.keras.metrics.TopKCategoricalAccuracy):
+    """Top-K accuracy metric that accepts either sparse or one-hot labels."""
+
+    def __init__(self, num_classes: int, k: int = 5, name: str = "top5", **kwargs) -> None:
+        super().__init__(k=k, name=name, **kwargs)
+        self.num_classes = num_classes
+
+    def update_state(self, y_true: tf.Tensor, y_pred: tf.Tensor, sample_weight: Optional[tf.Tensor] = None) -> None:
+        y_true = _ensure_one_hot_labels(y_true, self.num_classes, y_pred.dtype)
+        return super().update_state(y_true, y_pred, sample_weight)
+
+    def get_config(self) -> Dict[str, Any]:
+        config = super().get_config()
+        config.update({"num_classes": self.num_classes})
+        return config
+
+
+CUSTOM_OBJECTS: Dict[str, Any] = {
+    "AdaptiveCategoricalCrossentropy": AdaptiveCategoricalCrossentropy,
+    "AdaptiveCategoricalAccuracy": AdaptiveCategoricalAccuracy,
+    "AdaptiveTopKCategoricalAccuracy": AdaptiveTopKCategoricalAccuracy,
+}
 
 
 def create_baseline_model(
@@ -125,18 +252,14 @@ def create_baseline_model(
 
     model = tf.keras.Model(inputs, outputs, name="cifar100_resnet")
     optimizer = tf.keras.optimizers.AdamW(learning_rate=1e-3, weight_decay=1e-4)
-    # Use CategoricalCrossentropy with label smoothing. CIFAR100 labels are
-    # provided as sparse integer indices; we convert them to one-hot in the
-    # dataset pipeline when calling `train_baseline_model` so this loss can be
-    # used. This avoids the `TypeError` on some TF versions where
-    # `SparseCategoricalCrossentropy` doesn't accept the `label_smoothing`
-    # argument.
+    # Compile with an adaptive loss/metric stack so evaluations tolerate either
+    # sparse integer labels or one-hot vectors while preserving label smoothing.
     model.compile(
         optimizer=optimizer,
-        loss=tf.keras.losses.CategoricalCrossentropy(label_smoothing=0.05),
+        loss=AdaptiveCategoricalCrossentropy(num_classes=num_classes, label_smoothing=0.05),
         metrics=[
-            tf.keras.metrics.CategoricalAccuracy(name="accuracy"),
-            tf.keras.metrics.TopKCategoricalAccuracy(k=5, name="top5"),
+            AdaptiveCategoricalAccuracy(num_classes=num_classes, name="accuracy"),
+            AdaptiveTopKCategoricalAccuracy(num_classes=num_classes, k=5, name="top5"),
         ],
     )
     return model
@@ -255,7 +378,7 @@ def train_baseline_model(
     )
 
     if os.path.exists(checkpoint_path):
-        model = tf.keras.models.load_model(checkpoint_path)
+        model = tf.keras.models.load_model(checkpoint_path, custom_objects=CUSTOM_OBJECTS)
 
     test_accuracy = model.evaluate(test_ds, verbose=0)[1]
     model.save(output_path)

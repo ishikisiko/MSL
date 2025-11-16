@@ -9,6 +9,7 @@ import tensorflow as tf
 
 from application_scenarios import ApplicationScenarioAnalysis
 from baseline_model import (
+    CUSTOM_OBJECTS,
     DEFAULT_MODEL_PATH,
     create_baseline_model,
     prepare_compression_datasets,
@@ -83,7 +84,7 @@ def main() -> None:
     if args.train_baseline or not baseline_path.exists():
         train_baseline_model(output_path=str(baseline_path))
 
-    baseline_model = tf.keras.models.load_model(baseline_path)
+    baseline_model = tf.keras.models.load_model(baseline_path, custom_objects=CUSTOM_OBJECTS)
 
     (
         x_train,

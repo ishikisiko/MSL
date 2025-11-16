@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 
-from baseline_model import prepare_compression_datasets
+from baseline_model import CUSTOM_OBJECTS, prepare_compression_datasets
 
 
 DatasetLike = Union[
@@ -33,7 +33,7 @@ class PruningComparator:
         base_model_path: str,
         cache_datasets: bool = True,
     ) -> None:
-        self.base_model = tf.keras.models.load_model(base_model_path)
+        self.base_model = tf.keras.models.load_model(base_model_path, custom_objects=CUSTOM_OBJECTS)
         self.pruning_results: Dict[str, Dict] = {}
         self._dataset_bundle: Optional[DatasetBundle] = None
         self._cached_batch_size: Optional[int] = None
