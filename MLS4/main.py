@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-epochs",
         type=int,
-        default=50,
+        default=5,
         help="Total epochs for baseline training.",
     )
     parser.add_argument(

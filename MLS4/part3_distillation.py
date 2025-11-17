@@ -100,11 +100,13 @@ class DistillationFramework:
         teacher_model: tf.keras.Model,
         student_architecture: Callable[[float], tf.keras.Model],
         cache_datasets: bool = True,
+        batch_size: int = 32,
     ) -> None:
         self.teacher = teacher_model
         self.student_arch = student_architecture
         self.distillation_results: Dict[str, Dict] = {}
         self.cache_datasets = cache_datasets
+        self.batch_size = int(batch_size)
         self._dataset_bundle: Optional[DatasetBundle] = None
         if cache_datasets:
             self._dataset_bundle = self._prepare_datasets()
@@ -490,7 +492,7 @@ class DistillationFramework:
                     return aug(img, training=True), label
 
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
-            return ds.batch(128).prefetch(AUTOTUNE)
+            return ds.batch(self.batch_size).prefetch(AUTOTUNE)
 
         return DatasetBundle(
             train=build_ds(x_train, y_train, augment=True),
