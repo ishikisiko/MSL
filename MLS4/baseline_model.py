@@ -181,10 +181,62 @@ class AdaptiveTopKCategoricalAccuracy(tf.keras.metrics.TopKCategoricalAccuracy):
         return config
 
 
+@tf.keras.utils.register_keras_serializable(package="mls4")
+class LearningRateLogger(tf.keras.callbacks.Callback):
+    """Callback to log learning rate at the end of each epoch and batch."""
+    
+    def __init__(self, log_freq: str = "epoch", verbose: int = 1):
+        """
+        Args:
+            log_freq: Frequency of logging, either 'epoch' or 'batch'
+            verbose: Verbosity mode (0=silent, 1=print, 2=print with more details)
+        """
+        super().__init__()
+        self.log_freq = log_freq
+        self.verbose = verbose
+        
+    def on_epoch_end(self, epoch, logs=None):
+        if self.log_freq == "epoch":
+            lr = self.model.optimizer.lr
+            if isinstance(lr, tf.keras.optimizers.schedules.LearningRateSchedule):
+                # For learning rate schedules, we need to compute the current value
+                current_step = self.model.optimizer.iterations
+                lr = lr(current_step)
+                lr = float(tf.keras.backend.get_value(lr))
+            else:
+                lr = float(tf.keras.backend.get_value(lr))
+                
+            if self.verbose >= 1:
+                print(f"\nEpoch {epoch + 1}: Learning Rate = {lr:.6f}")
+                
+            if logs is None:
+                logs = {}
+            logs['lr'] = lr
+    
+    def on_train_batch_end(self, batch, logs=None):
+        if self.log_freq == "batch":
+            lr = self.model.optimizer.lr
+            if isinstance(lr, tf.keras.optimizers.schedules.LearningRateSchedule):
+                # For learning rate schedules, we need to compute the current value
+                current_step = self.model.optimizer.iterations
+                lr = lr(current_step)
+                lr = float(tf.keras.backend.get_value(lr))
+            else:
+                lr = float(tf.keras.backend.get_value(lr))
+                
+            if self.verbose >= 2 and batch % 100 == 0:  # Print every 100 batches to avoid spam
+                print(f"Batch {batch}: Learning Rate = {lr:.6f}")
+                
+            if logs is None:
+                logs = {}
+            logs['lr'] = lr
+
+
 CUSTOM_OBJECTS: Dict[str, Any] = {
     "AdaptiveCategoricalCrossentropy": AdaptiveCategoricalCrossentropy,
     "AdaptiveCategoricalAccuracy": AdaptiveCategoricalAccuracy,
     "AdaptiveTopKCategoricalAccuracy": AdaptiveTopKCategoricalAccuracy,
+    "LearningRateLogger": LearningRateLogger,
 }
 
 
@@ -356,13 +408,13 @@ def prepare_compression_datasets(
 
 
 def train_baseline_model(
-    epochs: int = 30,
+    epochs: int = 50,
     batch_size: int = DROP_REMAINDER_BATCH_SIZE,
     output_path: str = DEFAULT_MODEL_PATH,
     checkpoint_path: str = DEFAULT_CHECKPOINT_PATH,
     seed: int = 42,
     optimizer_name: str = "adamw",
-    base_learning_rate: float = 6e-4,
+    base_learning_rate: float = 5e-4,
     weight_decay: float = 1e-4,
     ema_decay: Optional[float] = 0.999,
 ) -> Dict[str, Any]:
@@ -392,9 +444,9 @@ def train_baseline_model(
     lr_schedule = tf.keras.optimizers.schedules.CosineDecayRestarts(
         initial_learning_rate=base_learning_rate,
         first_decay_steps=first_decay_steps,
-        t_mul=1.6,
-        m_mul=0.85,
-        alpha=0.1,
+        t_mul=1.5,
+        m_mul=0.9,
+        alpha=0.02,
     )
 
     model = create_baseline_model(
@@ -439,6 +491,8 @@ def train_baseline_model(
     )
 
     csv_logger = tf.keras.callbacks.CSVLogger(str(RESULTS_DIR / "baseline_training_log.csv"), append=False)
+    # Add learning rate logger to track current learning rate
+    lr_logger = LearningRateLogger(log_freq="epoch", verbose=1)
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_path,
@@ -450,12 +504,13 @@ def train_baseline_model(
         ),
         tf.keras.callbacks.EarlyStopping(
             monitor="val_accuracy",
-            patience=10,
+            patience=15,
             restore_best_weights=True,
             verbose=1,
         ),
         tf.keras.callbacks.TerminateOnNaN(),
         csv_logger,
+        lr_logger,
     ]
     ema_callback = None
     if ema_decay is not None and ema_decay < 1.0:
