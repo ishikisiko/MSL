@@ -46,19 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=32,
         help="Batch size for evaluations.",
     )
     parser.add_argument(
         "--baseline-batch-size",
         type=int,
-        default=64,
+        default=32,
         help="Batch size for baseline training.",
     )
     parser.add_argument(
         "--baseline-epochs",
         type=int,
-        default=5,
+        default=50,
         help="Total epochs for baseline training.",
     )
     parser.add_argument(
@@ -89,6 +89,12 @@ def parse_args() -> argparse.Namespace:
         "--disable-ema",
         action="store_true",
         help="Disable EMA tracking even if ema-decay is provided.",
+    )
+    parser.add_argument(
+        "--distillation-batch-size",
+        type=int,
+        default=32,
+        help="Batch size for distillation training.",
     )
     parser.add_argument(
         "--report-dir",
