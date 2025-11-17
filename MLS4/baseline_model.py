@@ -231,6 +231,15 @@ class LearningRateLogger(tf.keras.callbacks.Callback):
                 logs = {}
             logs['lr'] = lr
 
+    def get_config(self) -> Dict[str, Any]:
+        """Returns the serializable config of the callback."""
+        config = super().get_config()
+        config.update({
+            "log_freq": self.log_freq,
+            "verbose": self.verbose,
+        })
+        return config
+
 
 CUSTOM_OBJECTS: Dict[str, Any] = {
     "AdaptiveCategoricalCrossentropy": AdaptiveCategoricalCrossentropy,
