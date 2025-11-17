@@ -193,9 +193,9 @@ class PruningComparator:
         self,
         target_reduction: float = 0.5,
         importance_metric: str = "l1_norm",
-        fine_tune_epochs: int = 4,
+        fine_tune_epochs: int = 10,
         learning_rate: float = 5e-4,
-        batch_size: int = 128,
+        batch_size: int = 32,
         train_data: Optional[DatasetLike] = None,
         val_data: Optional[DatasetLike] = None,
     ) -> Dict:

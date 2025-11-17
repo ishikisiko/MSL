@@ -39,7 +39,7 @@ class QuantizationPipeline:
         self,
         model: tf.keras.Model,
         cache_datasets: bool = True,
-        default_batch_size: int = 128,
+        default_batch_size: int = 32,
     ) -> None:
         self.base_model = model
         self.quantization_results: Dict[str, Dict] = {}
@@ -77,7 +77,7 @@ class QuantizationPipeline:
     def mixed_bit_quantization(
         self,
         bit_configurations: List[int] = [8, 4, 2],
-        batch_size: int = 128,
+        batch_size: int = 32,
     ) -> Dict:
         """
         Assign heterogeneous bit-widths across layers using sensitivity analysis.
@@ -123,9 +123,9 @@ class QuantizationPipeline:
     def post_training_vs_qat_comparison(
         self,
         bit_widths: List[int] = [8, 4],
-        qat_epochs: int = 2,
+        qat_epochs: int = 10,
         qat_steps: int = 40,
-        batch_size: int = 128,
+        batch_size: int = 32,
     ) -> Dict:
         """
         Compare post-training quantization against simple quantization-aware tuning.

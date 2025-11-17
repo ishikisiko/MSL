@@ -255,7 +255,7 @@ class DistillationFramework:
         layer_names: Optional[Sequence[str]] = None,
         weight: float = 1.0,
         width_multiplier: float = 0.5,
-        epochs: int = 2,
+        epochs: int = 10,
         steps_per_epoch: int = 40,
     ) -> Dict:
         """
