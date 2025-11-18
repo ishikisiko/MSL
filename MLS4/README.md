@@ -6,8 +6,16 @@
 It is recommended to use a virtual environment to manage dependencies.
 
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
+conda create -n tf220 python=3.10 -y
+conda activate tf220
+
+# 2. 升级 pip
+python -m pip install --upgrade pip
+
+# 3. 装 GPU 版 TF（会自动拉配套的 CUDA/cuDNN）
+python -m pip install "tensorflow[and-cuda]"
+# 安装 legacy 版 Keras（与 tf.keras 对应）
+python -m pip install tf_keras
 ```
 
 ### 2. Install Dependencies

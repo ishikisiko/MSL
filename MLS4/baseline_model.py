@@ -25,6 +25,7 @@ TRAIN_HISTORY_PATH = RESULTS_DIR / "baseline_training_history.json"
 BASELINE_REPORT_PATH = REPORTS_DIR / "baseline_summary.json"
 DROP_REMAINDER_BATCH_SIZE = 256
 DEFAULT_BATCHNORM_PASSES = 200
+DEFAULT_MIXUP_ALPHA = 0.2
 
 
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,34 @@ _AUGMENTATION_PIPELINE = tf.keras.Sequential(
 
 def _augment_batch(images: tf.Tensor, labels: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
     return _AUGMENTATION_PIPELINE(images, training=True), labels
+
+
+def _mixup_batch(images: tf.Tensor, labels: tf.Tensor, alpha: float) -> Tuple[tf.Tensor, tf.Tensor]:
+    """Apply mixup regularization to a pre-batched set of images and labels."""
+
+    if alpha <= 0:
+        return images, labels
+
+    batch_size = tf.shape(images)[0]
+    images = tf.convert_to_tensor(images)
+    labels = tf.convert_to_tensor(labels)
+    dtype = images.dtype
+    alpha_tensor = tf.cast(alpha, dtype)
+
+    gamma1 = tf.random.gamma([batch_size], alpha_tensor, dtype=dtype)
+    gamma2 = tf.random.gamma([batch_size], alpha_tensor, dtype=dtype)
+    lam = gamma1 / (gamma1 + gamma2 + tf.keras.backend.epsilon())
+
+    lam_x = tf.reshape(lam, [-1, 1, 1, 1])
+    lam_y = tf.reshape(lam, [-1, 1])
+
+    indices = tf.random.shuffle(tf.range(batch_size))
+    shuffled_images = tf.gather(images, indices)
+    shuffled_labels = tf.gather(labels, indices)
+
+    mixed_images = images * lam_x + shuffled_images * (1.0 - lam_x)
+    mixed_labels = labels * lam_y + shuffled_labels * (1.0 - lam_y)
+    return mixed_images, mixed_labels
 
 
 @dataclass
@@ -249,6 +278,55 @@ CUSTOM_OBJECTS: Dict[str, Any] = {
 }
 
 
+@tf.keras.utils.register_keras_serializable(package="mls4")
+class WarmupCosineDecay(tf.keras.optimizers.schedules.LearningRateSchedule):
+    """Linear warmup followed by cosine decay without restarts."""
+
+    def __init__(
+        self,
+        base_learning_rate: float,
+        total_steps: int,
+        warmup_steps: int,
+        min_lr_ratio: float = 0.02,
+        name: str = "warmup_cosine_decay",
+    ) -> None:
+        super().__init__()
+        if total_steps <= 0:
+            raise ValueError("total_steps must be positive")
+        if warmup_steps < 0:
+            raise ValueError("warmup_steps must be non-negative")
+        self.base_learning_rate = float(base_learning_rate)
+        self.total_steps = int(total_steps)
+        self.warmup_steps = int(min(warmup_steps, total_steps))
+        self.min_lr_ratio = float(min_lr_ratio)
+        self.name = name
+
+    def __call__(self, step: tf.Tensor) -> tf.Tensor:
+        with tf.name_scope(self.name or "warmup_cosine_decay"):
+            step = tf.cast(step, tf.float32)
+            warmup_steps = tf.cast(tf.maximum(self.warmup_steps, 1), tf.float32)
+            total_steps = tf.cast(tf.maximum(self.total_steps, 1), tf.float32)
+            base_lr = tf.cast(self.base_learning_rate, tf.float32)
+            min_lr = base_lr * tf.cast(self.min_lr_ratio, tf.float32)
+
+            warmup_lr = base_lr * (step / warmup_steps)
+            progress = (step - warmup_steps) / tf.maximum(total_steps - warmup_steps, 1.0)
+            progress = tf.clip_by_value(progress, 0.0, 1.0)
+            cosine_decay = 0.5 * (1.0 + tf.cos(tf.constant(math.pi) * progress))
+            decayed_lr = min_lr + (base_lr - min_lr) * cosine_decay
+
+            return tf.where(step < warmup_steps, warmup_lr, decayed_lr)
+
+    def get_config(self) -> Dict[str, Any]:
+        return {
+            "base_learning_rate": self.base_learning_rate,
+            "total_steps": self.total_steps,
+            "warmup_steps": self.warmup_steps,
+            "min_lr_ratio": self.min_lr_ratio,
+            "name": self.name,
+        }
+
+
 def build_optimizer(
     optimizer_name: str,
     learning_rate: Union[float, tf.keras.optimizers.schedules.LearningRateSchedule],
@@ -277,11 +355,12 @@ def build_optimizer(
 def create_baseline_model(
     input_shape: Tuple[int, int, int] = (32, 32, 3),
     num_classes: int = 100,
-    dropout_rate: float = 0.3,
+    dropout_rate: float = 0.4,
     width_multiplier: float = 1.0,
     optimizer_name: str = "adamw",
     learning_rate: Union[float, tf.keras.optimizers.schedules.LearningRateSchedule] = 5e-4,
     weight_decay: float = 5e-5,
+    backbone_weights: Optional[str] = "imagenet",
 ) -> tf.keras.Model:
     """Create an EfficientNet-B0 based baseline tailored for CIFAR-100."""
 
@@ -292,7 +371,7 @@ def create_baseline_model(
     x = tf.keras.layers.Resizing(resize_target, resize_target, name="resize_to_128")(inputs)
     backbone = tf.keras.applications.EfficientNetB0(
         include_top=False,
-        weights=None,
+        weights=backbone_weights,
         input_tensor=x,
         drop_connect_rate=0.2,
     )
@@ -426,6 +505,8 @@ def train_baseline_model(
     base_learning_rate: float = 5e-4,
     weight_decay: float = 1e-4,
     ema_decay: Optional[float] = 0.999,
+    mixup_alpha: Optional[float] = DEFAULT_MIXUP_ALPHA,
+    backbone_weights: Optional[str] = "imagenet",
 ) -> Dict[str, Any]:
     """Train the EfficientNet-B0 baseline with modern regularization."""
 
@@ -449,19 +530,19 @@ def train_baseline_model(
 
     steps_per_epoch = math.ceil(len(x_train) / batch_size)
     total_steps = steps_per_epoch * max(epochs, 1)
-    first_decay_steps = max(total_steps // 5, steps_per_epoch, 1)
-    lr_schedule = tf.keras.optimizers.schedules.CosineDecayRestarts(
-        initial_learning_rate=base_learning_rate,
-        first_decay_steps=first_decay_steps,
-        t_mul=1.5,
-        m_mul=0.9,
-        alpha=0.02,
+    warmup_steps = max(int(total_steps * 0.1), steps_per_epoch)
+    lr_schedule = WarmupCosineDecay(
+        base_learning_rate=base_learning_rate,
+        total_steps=total_steps,
+        warmup_steps=warmup_steps,
+        min_lr_ratio=0.02,
     )
 
     model = create_baseline_model(
         optimizer_name=optimizer_name,
         learning_rate=lr_schedule,
         weight_decay=weight_decay,
+        backbone_weights=backbone_weights,
     )
     num_classes = model.output_shape[-1]
 
@@ -473,6 +554,7 @@ def train_baseline_model(
         shuffle=True,
         num_classes=num_classes,
         drop_remainder=True,
+        mixup_alpha=mixup_alpha,
     )
     val_ds = _build_dataset(
         x_val,
@@ -562,6 +644,8 @@ def train_baseline_model(
         "optimizer_name": optimizer_name,
         "weight_decay": weight_decay,
         "ema_decay": ema_decay,
+        "mixup_alpha": mixup_alpha,
+        "backbone_weights": backbone_weights,
         "dataset_cache": str(DATASET_CACHE_PATH),
         "calibration_file": str(CALIBRATION_EXPORT_PATH),
         "history_file": str(TRAIN_HISTORY_PATH),
@@ -587,6 +671,7 @@ def _build_dataset(
     shuffle: bool = False,
     num_classes: Optional[int] = None,
     drop_remainder: bool = False,
+    mixup_alpha: Optional[float] = None,
 ) -> tf.data.Dataset:
     features = np.asarray(features, dtype=np.float32)
     labels_array = np.asarray(labels)
@@ -599,7 +684,13 @@ def _build_dataset(
         ds = ds.shuffle(buffer_size=buffer, seed=1337, reshuffle_each_iteration=True)
     if augment:
         ds = ds.map(_augment_batch, num_parallel_calls=AUTOTUNE)
-    return ds.batch(batch_size, drop_remainder=drop_remainder).prefetch(AUTOTUNE)
+    ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    if augment and mixup_alpha is not None and mixup_alpha > 0:
+        def _apply_mixup(images: tf.Tensor, labels: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+            return _mixup_batch(images, labels, mixup_alpha)
+
+        ds = ds.map(_apply_mixup, num_parallel_calls=AUTOTUNE)
+    return ds.prefetch(AUTOTUNE)
 
 
 def _persist_dataset_cache(

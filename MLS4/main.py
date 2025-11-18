@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         help="Force re-training of the baseline model.",
     )
     parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Explicitly skip baseline training even if the baseline model is missing (will error if missing).",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=32,
@@ -52,13 +57,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-batch-size",
         type=int,
-        default=32,
+        default=16,
         help="Batch size for baseline training.",
     )
     parser.add_argument(
         "--baseline-epochs",
         type=int,
-        default=50,
+        default=100,
         help="Total epochs for baseline training.",
     )
     parser.add_argument(
@@ -133,7 +138,12 @@ def main() -> None:
     ema_decay = None if args.disable_ema or args.ema_decay >= 1.0 else args.ema_decay
     training_summary = None
 
-    if args.train_baseline or not baseline_path.exists():
+    if args.skip_baseline:
+        if not baseline_path.exists():
+            raise SystemExit(
+                f"Baseline model not found at {baseline_path}. Remove --skip-baseline or supply a valid --baseline-path to proceed."
+            )
+    elif args.train_baseline or not baseline_path.exists():
         training_summary = train_baseline_model(
             epochs=args.baseline_epochs,
             batch_size=args.baseline_batch_size,
