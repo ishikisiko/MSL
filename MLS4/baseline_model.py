@@ -325,18 +325,30 @@ class TFOpLambda(tf.keras.layers.Layer):
         return config
 
 
-class CompatibleBatchNormalization(tf.keras.layers.BatchNormalization):
-    """BatchNormalization that handles both list and int axis for tf_keras compatibility."""
-    
-    def __init__(self, axis=-1, **kwargs):
-        # Fix axis parameter: convert [3] to 3 for tf_keras compatibility
-        if isinstance(axis, list):
-            if len(axis) == 1:
-                axis = axis[0]
-            else:
-                # If multiple axes, keep as tuple (though rare for BN)
-                axis = tuple(axis)
-        super().__init__(axis=axis, **kwargs)
+# Monkey patch BatchNormalization to handle list axis from tf_keras
+# This MUST be done before any model loading
+_original_bn_init = tf.keras.layers.BatchNormalization.__init__
+
+def _patched_bn_init(self, axis=-1, **kwargs):
+    """Patched __init__ that converts list axis to int for tf_keras compatibility."""
+    if isinstance(axis, list):
+        if len(axis) == 1:
+            axis = axis[0]
+        elif len(axis) > 1:
+            axis = tuple(axis)
+    _original_bn_init(self, axis=axis, **kwargs)
+
+# Apply the monkey patch immediately
+tf.keras.layers.BatchNormalization.__init__ = _patched_bn_init
+
+# Verify the patch is working
+try:
+    _test_bn = tf.keras.layers.BatchNormalization(axis=[3])
+    if _test_bn.axis != 3:
+        print(f"Warning: BatchNormalization patch may not be working correctly")
+    del _test_bn
+except Exception as e:
+    print(f"Warning: BatchNormalization patch test failed: {e}")
 
 
 CUSTOM_OBJECTS: Dict[str, Any] = {
@@ -345,7 +357,6 @@ CUSTOM_OBJECTS: Dict[str, Any] = {
     "AdaptiveTopKCategoricalAccuracy": AdaptiveTopKCategoricalAccuracy,
     "LearningRateLogger": LearningRateLogger,
     "TFOpLambda": TFOpLambda,
-    "BatchNormalization": CompatibleBatchNormalization,
     # Add compatibility mappings for tf_keras -> keras migration
     "Functional": tf.keras.Model,
 }
