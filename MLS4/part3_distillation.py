@@ -126,7 +126,8 @@ class DistillationFramework:
         Grid-search temperature for standard response-based distillation.
         """
 
-        train_ds = self._get_dataset("train").take(steps_per_epoch).repeat()
+        # Remove .take().repeat() to fix OUT_OF_RANGE errors
+        train_ds = self._get_dataset("train")
         val_ds = self._get_dataset("val")
         temps = np.linspace(temperature_range[0], temperature_range[1], num_trials)
 
@@ -142,8 +143,10 @@ class DistillationFramework:
                 optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
+            # Use proper dataset handling to avoid OUT_OF_RANGE errors
+            epoch_train_ds = train_ds.take(steps_per_epoch)
             history = distiller.fit(
-                train_ds,
+                epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
                 validation_data=val_ds.take(max(1, steps_per_epoch // 4)),
@@ -184,7 +187,8 @@ class DistillationFramework:
         Chain teacher -> intermediate -> student distillation.
         """
 
-        train_ds = self._get_dataset("train").take(steps_per_epoch).repeat()
+        # Remove .take().repeat() to fix OUT_OF_RANGE errors
+        train_ds = self._get_dataset("train")
         val_ds = self._get_dataset("val")
 
         current_teacher = self.teacher
@@ -198,8 +202,10 @@ class DistillationFramework:
                 optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
+            # Use proper dataset handling to avoid OUT_OF_RANGE errors
+            epoch_train_ds = train_ds.take(steps_per_epoch)
             history = distiller.fit(
-                train_ds,
+                epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
                 validation_data=val_ds.take(max(1, steps_per_epoch // 4)),
@@ -265,7 +271,8 @@ class DistillationFramework:
         student = self._build_student(width_multiplier)
         optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
         val_ds = self._get_dataset("val")
-        train_ds = self._get_dataset("train").take(steps_per_epoch).repeat()
+        # Remove .take().repeat() to fix OUT_OF_RANGE errors
+        train_ds = self._get_dataset("train")
 
         teacher_layers = list(layer_names or self._default_attention_layers(self.teacher))
         student_layer_names = {layer.name for layer in student.layers}
@@ -371,7 +378,8 @@ class DistillationFramework:
         )
 
         history = {"feature_loss": [], "accuracy": []}
-        train_ds = self._get_dataset("train").take(steps_per_epoch).repeat()
+        # Remove .take().repeat() to fix OUT_OF_RANGE errors
+        train_ds = self._get_dataset("train")
 
         for _ in range(epochs):
             metric.reset_state()
@@ -421,7 +429,8 @@ class DistillationFramework:
         optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
         metric = tf.keras.metrics.SparseCategoricalAccuracy()
         val_ds = self._get_dataset("val")
-        train_ds = self._get_dataset("train").take(steps_per_epoch).repeat()
+        # Remove .take().repeat() to fix OUT_OF_RANGE errors
+        train_ds = self._get_dataset("train")
 
         history = {"loss": [], "accuracy": []}
         for _ in range(epochs):

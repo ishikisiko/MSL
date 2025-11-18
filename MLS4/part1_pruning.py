@@ -817,21 +817,117 @@ class PruningComparator:
             return float(metrics[1])
         return float(metrics)
 
+    def _compute_gradient_importance(
+        self,
+        model: tf.keras.Model,
+        layer_name: str,
+        dataset: tf.data.Dataset,
+        num_batches: int = 10,
+    ) -> np.ndarray:
+        """Compute gradient-based importance for filters."""
+        layer = model.get_layer(layer_name)
+        if not isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.Dense)):
+            raise ValueError(f"Layer {layer_name} is not a Conv2D or Dense layer")
+        
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            kernel_shape = layer.kernel.shape
+            filter_gradients = np.zeros(kernel_shape[-1])
+        else:
+            kernel_shape = layer.kernel.shape
+            filter_gradients = np.zeros(kernel_shape[-1])
+        
+        batch_count = 0
+        for images, labels in dataset.take(num_batches):
+            with tf.GradientTape() as tape:
+                predictions = model(images, training=True)
+                loss = model.loss(labels, predictions)
+            
+            gradients = tape.gradient(loss, layer.kernel)
+            if gradients is not None:
+                if isinstance(layer, tf.keras.layers.Conv2D):
+                    filter_gradients += np.sum(np.abs(gradients.numpy()), axis=(0, 1, 2))
+                else:
+                    filter_gradients += np.sum(np.abs(gradients.numpy()), axis=0)
+            
+            batch_count += 1
+            if batch_count >= num_batches:
+                break
+        
+        if batch_count > 0:
+            filter_gradients /= batch_count
+        
+        return filter_gradients
+    
+    def _compute_taylor_importance(
+        self,
+        model: tf.keras.Model,
+        layer_name: str,
+        dataset: tf.data.Dataset,
+        num_batches: int = 10,
+    ) -> np.ndarray:
+        """Compute Taylor importance (gradient * weight) for filters."""
+        layer = model.get_layer(layer_name)
+        if not isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.Dense)):
+            raise ValueError(f"Layer {layer_name} is not a Conv2D or Dense layer")
+        
+        kernel = layer.kernel.numpy()
+        
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            filter_importance = np.zeros(kernel.shape[-1])
+        else:
+            filter_importance = np.zeros(kernel.shape[-1])
+        
+        batch_count = 0
+        for images, labels in dataset.take(num_batches):
+            with tf.GradientTape() as tape:
+                predictions = model(images, training=True)
+                loss = model.loss(labels, predictions)
+            
+            gradients = tape.gradient(loss, layer.kernel)
+            if gradients is not None:
+                grad_np = gradients.numpy()
+                if isinstance(layer, tf.keras.layers.Conv2D):
+                    taylor = np.abs(kernel * grad_np)
+                    filter_importance += np.sum(taylor, axis=(0, 1, 2))
+                else:
+                    taylor = np.abs(kernel * grad_np)
+                    filter_importance += np.sum(taylor, axis=0)
+            
+            batch_count += 1
+            if batch_count >= num_batches:
+                break
+        
+        if batch_count > 0:
+            filter_importance /= batch_count
+        
+        return filter_importance
+
     def _compute_filter_importance(
         self,
         kernel: np.ndarray,
         metric: str,
+        model: Optional[tf.keras.Model] = None,
+        layer_name: Optional[str] = None,
+        dataset: Optional[tf.data.Dataset] = None,
     ) -> np.ndarray:
+        """Compute filter importance using various metrics."""
         metric = metric.lower()
+        
         if metric == "l2_norm":
-            importance = np.sqrt(np.sum(np.square(kernel), axis=(0, 1, 2)))
+            return np.sqrt(np.sum(np.square(kernel), axis=(0, 1, 2)))
+        
         elif metric == "gradient":
-            importance = np.sum(np.abs(kernel), axis=(0, 1, 2))
+            if model is None or layer_name is None or dataset is None:
+                raise ValueError("Gradient importance requires model, layer_name, and dataset")
+            return self._compute_gradient_importance(model, layer_name, dataset)
+        
         elif metric == "taylor":
-            importance = np.sum(np.square(kernel), axis=(0, 1, 2))
+            if model is None or layer_name is None or dataset is None:
+                raise ValueError("Taylor importance requires model, layer_name, and dataset")
+            return self._compute_taylor_importance(model, layer_name, dataset)
+        
         else:  # default l1
-            importance = np.sum(np.abs(kernel), axis=(0, 1, 2))
-        return importance
+            return np.sum(np.abs(kernel), axis=(0, 1, 2))
 
     def _find_previous_conv(
         self,
@@ -849,3 +945,356 @@ class PruningComparator:
             if isinstance(model.layers[idx], tf.keras.layers.Conv2D):
                 return model.layers[idx].name
         return None
+
+
+class LayerDependencyAnalyzer:
+    """Analyzes layer dependencies for structured pruning."""
+    
+    def __init__(self, model: tf.keras.Model):
+        self.model = model
+        self.dependency_graph = self._build_dependency_graph()
+    
+    def _build_dependency_graph(self) -> Dict[str, Dict]:
+        """Build a graph of layer dependencies."""
+        graph = {}
+        
+        layer_map = {layer.name: layer for layer in self.model.layers}
+        
+        for layer in self.model.layers:
+            outbound_layers = self._find_outbound_layers(layer.name, layer_map)
+            inbound_layers = self._find_inbound_layers(layer.name, layer_map)
+            
+            graph[layer.name] = {
+                'layer': layer,
+                'inbound': inbound_layers,
+                'outbound': outbound_layers,
+                'output_shape': layer.output_shape if hasattr(layer, 'output_shape') else None,
+                'input_shape': layer.input_shape if hasattr(layer, 'input_shape') else None
+            }
+        
+        return graph
+    
+    def _find_outbound_layers(self, layer_name: str, layer_map: Dict) -> List[str]:
+        """Find layers that receive output from the given layer."""
+        outbound = []
+        for layer in self.model.layers:
+            if hasattr(layer, 'input'):
+                try:
+                    inbound_layers = layer.input
+                    if isinstance(inbound_layers, list):
+                        for inp in inbound_layers:
+                            if hasattr(inp, '_keras_history'):
+                                src_layer = inp._keras_history[0]
+                                if src_layer.name == layer_name:
+                                    outbound.append(layer.name)
+                    else:
+                        if hasattr(inbound_layers, '_keras_history'):
+                            src_layer = inbound_layers._keras_history[0]
+                            if src_layer.name == layer_name:
+                                outbound.append(layer.name)
+                except:
+                    pass
+            else:
+                layer_idx = list(layer_map.keys()).index(layer_name)
+                current_idx = list(layer_map.keys()).index(layer.name)
+                if current_idx == layer_idx + 1:
+                    outbound.append(layer.name)
+        
+        return list(set(outbound))
+    
+    def _find_inbound_layers(self, layer_name: str, layer_map: Dict) -> List[str]:
+        """Find layers that provide input to the given layer."""
+        inbound = []
+        layer = layer_map[layer_name]
+        
+        if hasattr(layer, 'input'):
+            try:
+                inbound_inputs = layer.input
+                if isinstance(inbound_inputs, list):
+                    for inp in inbound_inputs:
+                        if hasattr(inp, '_keras_history'):
+                            src_layer = inp._keras_history[0]
+                            inbound.append(src_layer.name)
+                else:
+                    if hasattr(inbound_inputs, '_keras_history'):
+                        src_layer = inbound_inputs._keras_history[0]
+                        inbound.append(src_layer.name)
+            except:
+                pass
+        
+        if not inbound:
+            layer_names = list(layer_map.keys())
+            try:
+                idx = layer_names.index(layer_name)
+                if idx > 0:
+                    inbound.append(layer_names[idx - 1])
+            except:
+                pass
+        
+        return list(set(inbound))
+    
+    def propagate_pruning_effects(
+        self,
+        pruned_layers: Dict[str, List[int]]
+    ) -> Dict[str, Tuple[int, int]]:
+        """Propagate the effects of pruning through the network."""
+        dimension_changes = {}
+        
+        for layer_name, info in self.dependency_graph.items():
+            layer = info['layer']
+            if hasattr(layer, 'filters'):
+                dimension_changes[layer_name] = (layer.filters, layer.filters)
+            elif hasattr(layer, 'units'):
+                dimension_changes[layer_name] = (layer.units, layer.units)
+            else:
+                dimension_changes[layer_name] = (None, None)
+        
+        for layer_name, removed_filters in pruned_layers.items():
+            if layer_name not in self.dependency_graph:
+                continue
+            
+            layer_info = self.dependency_graph[layer_name]
+            layer = layer_info['layer']
+            
+            if hasattr(layer, 'filters'):
+                original_filters = layer.filters
+                new_output_channels = original_filters - len(removed_filters)
+                
+                current_input, _ = dimension_changes[layer_name]
+                dimension_changes[layer_name] = (current_input, new_output_channels)
+                
+                queue = [(outbound, new_output_channels) for outbound in layer_info['outbound']]
+                
+                while queue:
+                    current_layer_name, new_input_channels = queue.pop(0)
+                    if current_layer_name not in dimension_changes:
+                        continue
+                    
+                    current_input, current_output = dimension_changes[current_layer_name]
+                    
+                    dimension_changes[current_layer_name] = (new_input_channels, current_output)
+                    
+                    current_layer_info = self.dependency_graph.get(current_layer_name)
+                    if current_layer_info:
+                        current_layer = current_layer_info['layer']
+                        if hasattr(current_layer, 'units'):
+                            new_output = current_layer.units
+                            dimension_changes[current_layer_name] = (new_input_channels, new_output)
+                            for next_layer in current_layer_info['outbound']:
+                                queue.append((next_layer, new_output))
+        
+        return dimension_changes
+    
+    def get_affected_layers(self, pruned_layer_name: str) -> List[str]:
+        """Get all layers affected by pruning a specific layer."""
+        affected = set()
+        queue = [pruned_layer_name]
+        
+        while queue:
+            current = queue.pop(0)
+            if current in affected:
+                continue
+            
+            affected.add(current)
+            
+            if current in self.dependency_graph:
+                for outbound in self.dependency_graph[current]['outbound']:
+                    queue.append(outbound)
+        
+        affected.discard(pruned_layer_name)
+        return list(affected)
+
+
+class ModelRebuilder:
+    """Rebuilds model with pruned layers."""
+    
+    def __init__(self, original_model: tf.keras.Model):
+        self.original_model = original_model
+        self.original_weights = {layer.name: layer.get_weights() for layer in original_model.layers}
+    
+    def rebuild_with_pruned_filters(
+        self,
+        filters_to_remove: Dict[str, List[int]],
+        dependency_analyzer: LayerDependencyAnalyzer
+    ) -> tf.keras.Model:
+        """Rebuild model with physically removed filters."""
+        dimension_changes = dependency_analyzer.propagate_pruning_effects(filters_to_remove)
+        
+        new_layers = []
+        layer_configs = {}
+        
+        for layer in self.original_model.layers:
+            layer_name = layer.name
+            
+            if layer_name in filters_to_remove:
+                new_layer = self._create_pruned_layer(layer, filters_to_remove[layer_name])
+            else:
+                new_input_dim, new_output_dim = dimension_changes.get(layer_name, (None, None))
+                
+                if new_input_dim is not None and hasattr(layer, 'units'):
+                    new_layer = self._create_dense_with_new_input(layer, new_input_dim)
+                elif new_input_dim is not None and hasattr(layer, 'filters'):
+                    new_layer = self._create_conv_with_new_input(layer, new_input_dim)
+                else:
+                    new_layer = layer.__class__.from_config(layer.get_config())
+            
+            new_layers.append(new_layer)
+            layer_configs[layer_name] = new_layer
+        
+        return self._rebuild_model_topology(new_layers, layer_configs, dimension_changes, filters_to_remove)
+    
+    def _create_pruned_layer(self, layer: tf.keras.layers.Layer, filters_to_remove: List[int]) -> tf.keras.layers.Layer:
+        """Create a new layer with pruned filters/neurons."""
+        config = layer.get_config().copy()
+        
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            original_filters = config['filters']
+            new_filters = original_filters - len(filters_to_remove)
+            config['filters'] = max(1, new_filters)
+            
+        elif isinstance(layer, tf.keras.layers.Dense):
+            original_units = config['units']
+            new_units = original_units - len(filters_to_remove)
+            config['units'] = max(1, new_units)
+            
+        return layer.__class__.from_config(config)
+    
+    def _create_dense_with_new_input(self, layer: tf.keras.layers.Dense, new_input_dim: int) -> tf.keras.layers.Dense:
+        """Create Dense layer with new input dimension."""
+        config = layer.get_config().copy()
+        return tf.keras.layers.Dense.from_config(config)
+    
+    def _create_conv_with_new_input(self, layer: tf.keras.layers.Conv2D, new_input_dim: int) -> tf.keras.layers.Conv2D:
+        """Create Conv2D layer with new input dimension."""
+        config = layer.get_config().copy()
+        return tf.keras.layers.Conv2D.from_config(config)
+    
+    def _rebuild_model_topology(
+        self,
+        new_layers: List[tf.keras.layers.Layer],
+        layer_configs: Dict[str, tf.keras.layers.Layer],
+        dimension_changes: Dict[str, Tuple[int, int]],
+        filters_to_remove: Dict[str, List[int]]
+    ) -> tf.keras.Model:
+        """Rebuild model topology with new layers."""
+        if isinstance(self.original_model, tf.keras.Sequential):
+            new_model = tf.keras.Sequential()
+            for layer in new_layers:
+                new_model.add(layer)
+        else:
+            new_model = self._rebuild_functional_model(new_layers, dimension_changes)
+        
+        self._copy_weights_to_pruned_model(new_model, filters_to_remove, dimension_changes)
+        
+        return new_model
+    
+    def _rebuild_functional_model(
+        self,
+        new_layers: List[tf.keras.layers.Layer],
+        dimension_changes: Dict[str, Tuple[int, int]]
+    ) -> tf.keras.Model:
+        """Rebuild functional API model."""
+        first_layer = new_layers[0]
+        if hasattr(first_layer, 'input_shape') and first_layer.input_shape:
+            input_shape = first_layer.input_shape[1:]
+            inputs = tf.keras.Input(shape=input_shape)
+        else:
+            inputs = tf.keras.Input(shape=(32, 32, 3))
+        
+        x = inputs
+        for layer in new_layers:
+            x = layer(x)
+        
+        return tf.keras.Model(inputs=inputs, outputs=x)
+    
+    def _copy_weights_to_pruned_model(
+        self,
+        new_model: tf.keras.Model,
+        filters_to_remove: Dict[str, List[int]],
+        dimension_changes: Dict[str, Tuple[int, int]]
+    ):
+        """Copy weights from original model to pruned model."""
+        for new_layer in new_model.layers:
+            layer_name = new_layer.name
+            
+            if layer_name not in self.original_weights:
+                continue
+            
+            original_weights = self.original_weights[layer_name]
+            
+            if not original_weights:
+                continue
+            
+            if layer_name in filters_to_remove:
+                pruned_weights = self._extract_kept_weights(
+                    original_weights, filters_to_remove[layer_name], layer_name
+                )
+                new_layer.set_weights(pruned_weights)
+            else:
+                new_input_dim, _ = dimension_changes.get(layer_name, (None, None))
+                
+                if new_input_dim is not None and len(original_weights) > 0:
+                    adjusted_weights = self._adjust_weights_for_new_input(
+                        original_weights, new_input_dim, layer_name
+                    )
+                    new_layer.set_weights(adjusted_weights)
+                else:
+                    new_layer.set_weights(original_weights)
+    
+    def _extract_kept_weights(
+        self,
+        weights: List[np.ndarray],
+        removed_indices: List[int],
+        layer_name: str
+    ) -> List[np.ndarray]:
+        """Extract weights for kept filters/neurons."""
+        if not weights:
+            return weights
+        
+        kernel = weights[0]
+        bias = weights[1] if len(weights) > 1 else None
+        
+        num_filters = kernel.shape[-1]
+        keep_mask = np.ones(num_filters, dtype=bool)
+        keep_mask[removed_indices] = False
+        
+        new_kernel = kernel[..., keep_mask]
+        
+        new_weights = [new_kernel]
+        
+        if bias is not None:
+            new_bias = bias[keep_mask]
+            new_weights.append(new_bias)
+        
+        for i in range(2, len(weights)):
+            new_weights.append(weights[i][keep_mask] if weights[i].shape[0] == num_filters else weights[i])
+        
+        return new_weights
+    
+    def _adjust_weights_for_new_input(
+        self,
+        weights: List[np.ndarray],
+        new_input_dim: int,
+        layer_name: str
+    ) -> List[np.ndarray]:
+        """Adjust weights for changed input dimension."""
+        if not weights:
+            return weights
+        
+        kernel = weights[0]
+        original_input_dim = kernel.shape[-2] if len(kernel.shape) > 1 else kernel.shape[-1]
+        
+        if original_input_dim == new_input_dim:
+            return weights
+        
+        if len(kernel.shape) == 4:
+            new_kernel = kernel[..., :new_input_dim, :]
+        else:
+            new_kernel = kernel[..., :new_input_dim, :]
+        
+        new_weights = [new_kernel]
+        
+        for i in range(1, len(weights)):
+            new_weights.append(weights[i])
+        
+        return new_weights

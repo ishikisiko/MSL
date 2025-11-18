@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import tf_compat  # noqa: F401  # enforce legacy tf.keras mode for compatibility
@@ -132,9 +133,9 @@ class QuantizationPipeline:
         """
 
         val_ds = self._get_dataset("val", batch_size=batch_size)
-        train_subset = (
-            self._get_dataset("train", batch_size=batch_size).take(qat_steps).repeat()
-        )
+        # Remove .take().repeat() combination to fix OUT_OF_RANGE errors
+        # Use proper dataset handling in QAT training instead
+        train_subset = self._get_dataset("train", batch_size=batch_size)
 
         comparison = {
             "ptq_results": {},
@@ -245,7 +246,7 @@ class QuantizationPipeline:
         dynamic_ranges: List[Tuple[float, float]] = []
         dynamic_correct, static_correct, total = 0, 0, 0
 
-        for batch_idx, (images, labels) in enumerate(val_ds.take(sample_batches)):
+        for images, labels in val_ds.take(sample_batches):
             logits = self.base_model(images, training=False).numpy()
             batch_min = float(np.min(logits))
             batch_max = float(np.max(logits))
@@ -317,6 +318,398 @@ class QuantizationPipeline:
         }
         self.quantization_results["error_analysis"] = analysis
         return analysis
+
+    # ------------------------------------------------------------------ #
+    # Standard TFLite Quantization Implementation (ASS.md requirements)
+    # ------------------------------------------------------------------ #
+    def standard_tflite_quantization(
+        self,
+        quantization_type: str = "post_training",
+        representative_data: Optional[tf.data.Dataset] = None,
+        target_platform: str = "generic",
+    ) -> Dict[str, Any]:
+        """
+        Implement standard TFLite quantization as required by ASS.md
+
+        Args:
+            quantization_type: 'post_training', 'dynamic_range', 'full_integer'
+            representative_data: Dataset for PTQ calibration
+            target_platform: 'generic', 'edge_tpu', 'arm_cortex_m', 'mobile_gpu'
+        """
+        results = {}
+
+        # 1. Post-training Quantization (PTQ) - ASS.md requirement
+        if quantization_type in ["post_training", "full_integer"]:
+            ptq_results = self._implement_post_training_quantization(
+                representative_data, target_platform
+            )
+            results["post_training_quantization"] = ptq_results
+
+        # 2. Dynamic Range Quantization - ASS.md requirement
+        if quantization_type in ["dynamic_range"]:
+            dr_results = self._implement_dynamic_range_quantization()
+            results["dynamic_range_quantization"] = dr_results
+
+        # 3. Full Integer Quantization - Enhanced PTQ
+        if quantization_type == "full_integer":
+            fi_results = self._implement_full_integer_quantization(
+                representative_data, target_platform
+            )
+            results["full_integer_quantization"] = fi_results
+
+        return results
+
+    def _implement_post_training_quantization(
+        self,
+        representative_data: Optional[tf.data.Dataset],
+        target_platform: str
+    ) -> Dict[str, Any]:
+        """Implement standard TFLite post-training quantization"""
+
+        def representative_dataset():
+            """Generate representative data for TFLite quantization"""
+            if representative_data is None:
+                # Use calibration data as representative dataset
+                if self._dataset_bundle:
+                    calib_x, _ = self._dataset_bundle.calibration
+                    for i in range(min(100, len(calib_x))):
+                        yield [np.expand_dims(calib_x[i], axis=0).astype(np.float32)]
+                else:
+                    raise ValueError("No representative data available for PTQ")
+            else:
+                for x_batch, _ in representative_data.take(100):
+                    for i in range(x_batch.shape[0]):
+                        yield [np.expand_dims(x_batch[i], axis=0).astype(np.float32)]
+
+        try:
+            # Convert baseline model to TFLite with PTQ
+            converter = tf.lite.TFLiteConverter.from_keras_model(self.base_model)
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+            # Set representative dataset for full integer quantization
+            converter.representative_dataset = representative_dataset
+
+            # Configure for target platform
+            if target_platform == "edge_tpu":
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+            elif target_platform == "arm_cortex_m":
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+                converter.inference_input_type = tf.int8
+                converter.inference_output_type = tf.int8
+            else:
+                # Generic platform
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS,
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+
+            # Convert model
+            quantized_tflite = converter.convert()
+
+            # Save TFLite model
+            ptq_path = "models/ptq_quantized_model.tflite"
+            os.makedirs("models", exist_ok=True)
+            with open(ptq_path, 'wb') as f:
+                f.write(quantized_tflite)
+
+            # Evaluate TFLite model
+            accuracy = self._evaluate_tflite_model(quantized_tflite)
+            model_size = len(quantized_tflite) / (1024 * 1024)  # MB
+
+            return {
+                "tflite_model": quantized_tflite,
+                "model_path": ptq_path,
+                "accuracy": accuracy,
+                "model_size_mb": model_size,
+                "compression_ratio": self._calculate_tflite_compression_ratio(quantized_tflite),
+                "quantization_type": "post_training",
+                "target_platform": target_platform
+            }
+
+        except Exception as e:
+            print(f"Post-training quantization failed: {e}")
+            return {"error": str(e)}
+
+    def _implement_dynamic_range_quantization(self) -> Dict[str, Any]:
+        """Implement TFLite dynamic range quantization"""
+
+        try:
+            # Convert baseline model to TFLite with dynamic range quantization
+            converter = tf.lite.TFLiteConverter.from_keras_model(self.base_model)
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+            # Note: No representative dataset needed for dynamic range
+            quantized_tflite = converter.convert()
+
+            # Save TFLite model
+            dr_path = "models/dynamic_range_quantized_model.tflite"
+            os.makedirs("models", exist_ok=True)
+            with open(dr_path, 'wb') as f:
+                f.write(quantized_tflite)
+
+            # Evaluate TFLite model
+            accuracy = self._evaluate_tflite_model(quantized_tflite)
+            model_size = len(quantized_tflite) / (1024 * 1024)  # MB
+
+            return {
+                "tflite_model": quantized_tflite,
+                "model_path": dr_path,
+                "accuracy": accuracy,
+                "model_size_mb": model_size,
+                "compression_ratio": self._calculate_tflite_compression_ratio(quantized_tflite),
+                "quantization_type": "dynamic_range"
+            }
+
+        except Exception as e:
+            print(f"Dynamic range quantization failed: {e}")
+            return {"error": str(e)}
+
+    def _evaluate_tflite_model(self, tflite_model: bytes) -> float:
+        """Evaluate TFLite model accuracy"""
+        try:
+            # Create TFLite interpreter
+            interpreter = tf.lite.Interpreter(model_content=tflite_model)
+            interpreter.allocate_tensors()
+
+            # Get input and output details
+            input_details = interpreter.get_input_details()
+            output_details = interpreter.get_output_details()
+
+            # Test on validation dataset
+            val_ds = self._get_dataset("val", batch_size=1)
+            correct = 0
+            total = 0
+
+            for x_batch, y_batch in val_ds.take(100):  # Test on 100 samples
+                # Set input tensor
+                input_data = x_batch.numpy().astype(np.float32)
+                interpreter.set_tensor(input_details[0]['index'], input_data)
+
+                # Run inference
+                interpreter.invoke()
+
+                # Get output
+                output_data = interpreter.get_tensor(output_details[0]['index'])
+                predicted_class = np.argmax(output_data, axis=1)[0]
+
+                # Check accuracy
+                true_class = y_batch.numpy()[0]
+                if predicted_class == true_class:
+                    correct += 1
+                total += 1
+
+            return correct / total if total > 0 else 0.0
+
+        except Exception as e:
+            print(f"TFLite model evaluation failed: {e}")
+            return 0.0
+
+    def _calculate_tflite_compression_ratio(self, tflite_model: bytes) -> float:
+        """Calculate compression ratio for TFLite model"""
+        # Estimate original model size (rough approximation)
+        original_size = sum([
+            weight.size * 4  # float32 = 4 bytes
+            for layer in self.base_model.layers
+            for weight in layer.get_weights()
+        ]) / (1024 * 1024)  # MB
+
+        tflite_size = len(tflite_model) / (1024 * 1024)  # MB
+
+        return original_size / max(tflite_size, 0.1)
+
+    def implement_standard_qat(
+        self,
+        train_dataset: tf.data.Dataset,
+        validation_dataset: tf.data.Dataset,
+        epochs: int = 10,
+        steps_per_epoch: int = 500,
+        fine_tune_learning_rate: float = 1e-4,
+        target_platform: str = "generic"
+    ) -> Dict[str, Any]:
+        """
+        Implement standard Quantization-Aware Training using TF-MOT
+
+        Args:
+            train_dataset: Training dataset
+            validation_dataset: Validation dataset
+            epochs: Number of QAT fine-tuning epochs
+            steps_per_epoch: Training steps per epoch
+            fine_tune_learning_rate: Learning rate for QAT fine-tuning
+            target_platform: Target deployment platform
+        """
+        try:
+            # Import TensorFlow Model Optimization Toolkit
+            import tensorflow_model_optimization as tfmot
+
+            # Apply QAT to the baseline model
+            quantize_model = tfmot.quantization.keras.quantize_model
+
+            # Create QAT model
+            qat_model = quantize_model(self.base_model)
+
+            # Compile QAT model with lower learning rate for fine-tuning
+            qat_model.compile(
+                optimizer=tf.keras.optimizers.Adam(learning_rate=fine_tune_learning_rate),
+                loss=self._loss_config,
+                metrics=['accuracy']
+            )
+
+            # Fine-tune the QAT model
+            print(f"Starting QAT fine-tuning for {epochs} epochs...")
+            start_time = time.perf_counter()
+
+            # Proper dataset handling to avoid OUT_OF_RANGE errors
+            train_ds_for_qat = train_dataset.take(steps_per_epoch)
+
+            history = qat_model.fit(
+                train_ds_for_qat,
+                validation_data=validation_dataset,
+                epochs=epochs,
+                steps_per_epoch=steps_per_epoch,
+                verbose=1
+            )
+
+            training_time = time.perf_counter() - start_time
+
+            # Strip quantization nodes for inference
+            stripped_qat_model = tfmot.quantization.keras.strip_pruning(qat_model)
+
+            # Convert to TFLite
+            converter = tf.lite.TFLiteConverter.from_keras_model(stripped_qat_model)
+            converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+            # Platform-specific configuration
+            if target_platform == "edge_tpu":
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+            elif target_platform == "arm_cortex_m":
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+                converter.inference_input_type = tf.int8
+                converter.inference_output_type = tf.int8
+            else:
+                converter.target_spec.supported_ops = [
+                    tf.lite.OpsSet.TFLITE_BUILTINS,
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                ]
+
+            # Convert QAT model to TFLite
+            qat_tflite = converter.convert()
+
+            # Save QAT TFLite model
+            qat_path = "models/qat_quantized_model.tflite"
+            os.makedirs("models", exist_ok=True)
+            with open(qat_path, 'wb') as f:
+                f.write(qat_tflite)
+
+            # Save QAT Keras model
+            qat_keras_path = "models/qat_fine_tuned_model.keras"
+            qat_model.save(qat_keras_path)
+
+            # Evaluate QAT models
+            keras_accuracy = qat_model.evaluate(validation_dataset, verbose=0)[1]
+            tflite_accuracy = self._evaluate_tflite_model(qat_tflite)
+
+            # Calculate model sizes and compression
+            keras_size = os.path.getsize(qat_keras_path) / (1024 * 1024)  # MB
+            tflite_size = len(qat_tflite) / (1024 * 1024)  # MB
+            compression_ratio = self._calculate_tflite_compression_ratio(qat_tflite)
+
+            # Compare with baseline
+            baseline_accuracy = self._baseline_accuracy(validation_dataset)
+
+            return {
+                "qat_keras_model": qat_model,
+                "qat_tflite_model": qat_tflite,
+                "keras_model_path": qat_keras_path,
+                "tflite_model_path": qat_path,
+                "keras_accuracy": keras_accuracy,
+                "tflite_accuracy": tflite_accuracy,
+                "baseline_accuracy": baseline_accuracy,
+                "accuracy_drop": baseline_accuracy - tflite_accuracy,
+                "keras_size_mb": keras_size,
+                "tflite_size_mb": tflite_size,
+                "compression_ratio": compression_ratio,
+                "training_time_sec": training_time,
+                "history": history.history,
+                "quantization_type": "quantization_aware_training",
+                "target_platform": target_platform,
+                "epochs": epochs,
+                "steps_per_epoch": steps_per_epoch
+            }
+
+        except ImportError:
+            return {"error": "tensorflow_model_optimization not installed. Install with: pip install tensorflow-model-optimization"}
+        except Exception as e:
+            print(f"QAT implementation failed: {e}")
+            return {"error": str(e)}
+
+    def compare_ptq_vs_qat(
+        self,
+        train_dataset: tf.data.Dataset,
+        validation_dataset: tf.data.Dataset,
+        qat_epochs: int = 5,
+        target_platform: str = "generic"
+    ) -> Dict[str, Any]:
+        """
+        Comprehensive comparison between PTQ and QAT as required by ASS.md
+        """
+        results = {
+            "ptq_results": {},
+            "qat_results": {},
+            "comparison": {},
+            "recommendations": {}
+        }
+
+        # 1. Post-Training Quantization
+        print("Implementing Post-Training Quantization...")
+        ptq_results = self.standard_tflite_quantization(
+            quantization_type="post_training",
+            representative_data=train_dataset,
+            target_platform=target_platform
+        )
+        results["ptq_results"] = ptq_results
+
+        # 2. Quantization-Aware Training
+        print("Implementing Quantization-Aware Training...")
+        qat_results = self.implement_standard_qat(
+            train_dataset=train_dataset,
+            validation_dataset=validation_dataset,
+            epochs=qat_epochs,
+            target_platform=target_platform
+        )
+        results["qat_results"] = qat_results
+
+        # 3. Comparison Analysis
+        if "post_training_quantization" in ptq_results and "accuracy" in ptq_results["post_training_quantization"]:
+            if "tflite_accuracy" in qat_results:
+                ptq_acc = ptq_results["post_training_quantization"]["accuracy"]
+                qat_acc = qat_results["tflite_accuracy"]
+
+                results["comparison"] = {
+                    "ptq_accuracy": ptq_acc,
+                    "qat_accuracy": qat_acc,
+                    "accuracy_gain": qat_acc - ptq_acc,
+                    "ptq_size_mb": ptq_results["post_training_quantization"]["model_size_mb"],
+                    "qat_size_mb": qat_results["tflite_size_mb"],
+                    "qat_training_time": qat_results.get("training_time_sec", 0)
+                }
+
+                # Recommendations
+                if qat_acc > ptq_acc + 0.01:  # 1% improvement
+                    results["recommendations"]["preferred_method"] = "QAT"
+                    results["recommendations"]["reason"] = f"QAT provides {qat_acc - ptq_acc:.1%} accuracy improvement"
+                else:
+                    results["recommendations"]["preferred_method"] = "PTQ"
+                    results["recommendations"]["reason"] = "PTQ provides comparable accuracy with no training overhead"
+
+        return results
 
     # ------------------------------------------------------------------ #
     # Static helpers for other modules
@@ -501,8 +894,10 @@ class QuantizationPipeline:
     ) -> Dict[str, List[float]]:
         history = {"loss": [], "accuracy": []}
         for epoch in range(epochs):
+            # Create fresh dataset for each epoch to avoid OUT_OF_RANGE errors
+            epoch_ds = train_subset.take(steps_per_epoch)
             hist = model.fit(
-                train_subset,
+                epoch_ds,
                 epochs=1,
                 steps_per_epoch=steps_per_epoch,
                 verbose=0,

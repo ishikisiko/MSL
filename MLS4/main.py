@@ -117,6 +117,23 @@ def parse_args() -> argparse.Namespace:
         help="Skip quantization experiments.",
     )
     parser.add_argument(
+        "--tflite-platform",
+        choices=("generic", "edge_tpu", "arm_cortex_m", "mobile_gpu"),
+        default="generic",
+        help="Target platform for TFLite quantization.",
+    )
+    parser.add_argument(
+        "--qat-epochs",
+        type=int,
+        default=5,
+        help="Number of epochs for QAT fine-tuning.",
+    )
+    parser.add_argument(
+        "--skip-tflite-quantization",
+        action="store_true",
+        help="Skip new TFLite quantization (only run legacy quantization).",
+    )
+    parser.add_argument(
         "--skip-distillation",
         action="store_true",
         help="Skip distillation experiments.",
@@ -203,6 +220,8 @@ def main() -> None:
     quantization_artifacts: Dict[str, Dict] = {}
     if not args.skip_quantization:
         quant_pipeline = QuantizationPipeline(baseline_model)
+
+        # 1. Legacy mixed-bit quantization (kept for compatibility)
         mixed = quant_pipeline.mixed_bit_quantization()
         quantization_artifacts["mixed_bit"] = mixed["mixed_bit_models"]["adaptive_assignment"]
         register_model(
@@ -211,21 +230,87 @@ def main() -> None:
             "quantization_mixed",
         )
 
+        # 2. Legacy PTQ vs QAT comparison (kept for compatibility)
         ptq_qat = quant_pipeline.post_training_vs_qat_comparison()
         for bits, payload in ptq_qat["ptq_results"].items():
-            name = f"ptq_{bits}bit"
+            name = f"legacy_ptq_{bits}bit"
             quantization_artifacts[name] = payload
-            register_model(name, payload["model"], f"ptq_{bits}")
+            register_model(name, payload["model"], f"legacy_ptq_{bits}")
         for bits, payload in ptq_qat["qat_results"].items():
-            name = f"qat_{bits}bit"
+            name = f"legacy_qat_{bits}bit"
             quantization_artifacts[name] = payload
-            register_model(name, payload["model"], f"qat_{bits}")
+            register_model(name, payload["model"], f"legacy_qat_{bits}")
 
+        # 3. NEW: Standard TFLite Post-Training Quantization (ASS.md requirement)
+        ptq_results = {}
+        if not args.skip_tflite_quantization:
+            print("Implementing standard TFLite Post-Training Quantization...")
+            ptq_results = quant_pipeline.standard_tflite_quantization(
+                quantization_type="post_training",
+                representative_data=train_ds,
+                target_platform=args.tflite_platform
+            )
+            if "post_training_quantization" in ptq_results and "accuracy" in ptq_results["post_training_quantization"]:
+                quantization_artifacts["tflite_ptq"] = ptq_results["post_training_quantization"]
+                print(f"TFLite PTQ Accuracy: {ptq_results['post_training_quantization']['accuracy']:.4f}")
+                print(f"TFLite PTQ Model Size: {ptq_results['post_training_quantization']['model_size_mb']:.2f} MB")
+
+        # 4. NEW: Standard TFLite Dynamic Range Quantization (ASS.md requirement)
+        if not args.skip_tflite_quantization:
+            print("Implementing standard TFLite Dynamic Range Quantization...")
+            dr_results = quant_pipeline.standard_tflite_quantization(
+                quantization_type="dynamic_range",
+                target_platform=args.tflite_platform
+            )
+            if "dynamic_range_quantization" in dr_results and "accuracy" in dr_results["dynamic_range_quantization"]:
+                quantization_artifacts["tflite_dynamic_range"] = dr_results["dynamic_range_quantization"]
+                print(f"TFLite Dynamic Range Accuracy: {dr_results['dynamic_range_quantization']['accuracy']:.4f}")
+                print(f"TFLite Dynamic Range Model Size: {dr_results['dynamic_range_quantization']['model_size_mb']:.2f} MB")
+
+        # 5. NEW: Standard TFLite Quantization-Aware Training (ASS.md requirement)
+        if not args.skip_tflite_quantization:
+            print("Implementing standard TFLite Quantization-Aware Training...")
+            qat_results = quant_pipeline.implement_standard_qat(
+                train_dataset=train_ds,
+                validation_dataset=val_ds,
+                epochs=args.qat_epochs,
+                target_platform=args.tflite_platform
+            )
+            if "tflite_accuracy" in qat_results:
+                quantization_artifacts["tflite_qat"] = qat_results
+                # Register the QAT Keras model for traditional evaluation
+                register_model("tflite_qat_keras", qat_results["qat_keras_model"], "tflite_qat")
+                print(f"TFLite QAT Keras Accuracy: {qat_results['keras_accuracy']:.4f}")
+                print(f"TFLite QAT TFLite Accuracy: {qat_results['tflite_accuracy']:.4f}")
+                print(f"TFLite QAT Training Time: {qat_results['training_time_sec']:.1f}s")
+
+        # 6. NEW: PTQ vs QAT Comprehensive Comparison
+        comparison_results = {}
+        if not args.skip_tflite_quantization:
+            print("Running PTQ vs QAT comprehensive comparison...")
+            comparison_results = quant_pipeline.compare_ptq_vs_qat(
+                train_dataset=train_ds,
+                validation_dataset=val_ds,
+                qat_epochs=max(1, args.qat_epochs - 2),  # Slightly shorter for comparison
+                target_platform=args.tflite_platform
+            )
+            if "comparison" in comparison_results:
+                quantization_artifacts["ptq_vs_qat_comparison"] = comparison_results
+                print(f"PTQ vs QAT Comparison completed")
+                if comparison_results.get("comparison"):
+                    comp = comparison_results["comparison"]
+                    print(f"  PTQ Accuracy: {comp.get('ptq_accuracy', 0):.4f}")
+                    print(f"  QAT Accuracy: {comp.get('qat_accuracy', 0):.4f}")
+                    print(f"  QAT Gain: {comp.get('accuracy_gain', 0):.4f}")
+
+        # 7. Extreme quantization (kept for compatibility)
         extreme = quant_pipeline.extreme_quantization()
         for key, payload in extreme.items():
             if isinstance(payload, dict) and "model" in payload:
-                quantization_artifacts[key] = payload
-                register_model(key, payload["model"], key)
+                quantization_artifacts[f"extreme_{key}"] = payload
+                register_model(f"extreme_{key}", payload["model"], f"extreme_{key}")
+
+        print("All quantization experiments completed successfully!")
 
     distillation_artifacts: Dict[str, Dict] = {}
     if not args.skip_distillation:

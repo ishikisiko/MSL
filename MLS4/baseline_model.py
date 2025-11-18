@@ -11,6 +11,28 @@ import numpy as np
 import tf_compat  # noqa: F401  # keep tfmot compatible with newer TensorFlow builds
 import tensorflow as tf
 
+# Fix EfficientNet GPU layout optimization issues
+def configure_efficientnet_gpu():
+    """Configure GPU settings to fix EfficientNet layout optimization errors"""
+    # Disable layout optimization that causes issues with EfficientNet dropout layers
+    os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+
+    # Configure GPU memory growth to prevent OOM errors
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            print(f"Configured GPU memory growth for {len(gpus)} GPU(s)")
+        except RuntimeError as e:
+            print(f"GPU memory configuration failed: {e}")
+    else:
+        print("No GPUs found, using CPU")
+
+# Apply GPU configuration immediately
+configure_efficientnet_gpu()
+
 
 AUTOTUNE = tf.data.AUTOTUNE
 CALIBRATION_SIZE = 1000
