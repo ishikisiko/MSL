@@ -65,7 +65,8 @@ class SimpleDistiller(tf.keras.Model):
     def train_step(self, data):
         x, y = data
         x = tf.cast(x, tf.float32)
-        teacher_predictions = self.teacher(x, training=False)
+        # Stop gradient to avoid backprop through teacher's BatchNorm layers
+        teacher_predictions = tf.stop_gradient(self.teacher(x, training=False))
         temperature = self.temperature
         alpha = self.alpha
 
@@ -360,7 +361,9 @@ class DistillationFramework:
             for images, labels in train_ds.take(steps_per_epoch):
                 with tf.GradientTape() as tape:
                     student_logits = student(images, training=True)
+                    # Stop gradient to avoid backprop through teacher's BatchNorm layers
                     teacher_att = teacher_attention_model(images, training=False)
+                    teacher_att = [tf.stop_gradient(feat) for feat in teacher_att]
                     student_att = student_attention_model(images, training=True)
                     attention_loss = self._attention_loss(teacher_att, student_att)
                     ce_loss = tf.reduce_mean(
@@ -439,7 +442,9 @@ class DistillationFramework:
                 for images, labels in train_ds.take(steps_per_epoch):
                     with tf.GradientTape() as tape:
                         student_logits = student(images, training=True)
+                        # Stop gradient to avoid backprop through teacher's BatchNorm layers
                         teacher_acts = teacher_features(images, training=False)
+                        teacher_acts = [tf.stop_gradient(feat) for feat in teacher_acts]
                         student_acts = student_features(images, training=True)
                         feat_loss = self._feature_loss(teacher_acts, student_acts)
                         ce_loss = tf.reduce_mean(
@@ -492,8 +497,11 @@ class DistillationFramework:
                 for images, labels in train_ds.take(steps_per_epoch):
                     with tf.GradientTape() as tape:
                         student_logits = student(images, training=True)
+                        # Stop gradient to avoid backprop through teachers' BatchNorm layers
+                        ensemble_outputs = [teacher(images, training=False) for teacher in teachers]
+                        ensemble_outputs = [tf.stop_gradient(output) for output in ensemble_outputs]
                         ensemble_logits = tf.reduce_mean(
-                            tf.stack([teacher(images, training=False) for teacher in teachers], axis=0),
+                            tf.stack(ensemble_outputs, axis=0),
                             axis=0,
                         )
                         hard_loss = tf.reduce_mean(
