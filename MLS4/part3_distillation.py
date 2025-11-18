@@ -122,11 +122,8 @@ class DistillationFramework:
         cache_datasets: bool = True,
         batch_size: int = 32,
     ) -> None:
-        # Switch to float32 globally for distillation to avoid LossScaleOptimizer warnings
+        # No need to switch precision - baseline is already FP32
         self._original_policy = mixed_precision.global_policy()
-        if self._original_policy.name != 'float32':
-            print(f"⚠️  切换到 float32 以兼容蒸馏训练 (原策略: {self._original_policy.name})")
-            mixed_precision.set_global_policy('float32')
         
         self.teacher = self._clone_model_float32(teacher_model)
         self.student_arch = student_architecture

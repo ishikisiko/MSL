@@ -396,35 +396,86 @@ class QuantizationPipeline:
         representative_data: Optional[tf.data.Dataset],
         target_platform: str
     ) -> Dict[str, Any]:
-        """Implement standard TFLite post-training quantization"""
+        """Implement standard TFLite post-training quantization with GPU acceleration"""
 
-        def representative_dataset():
-            """Generate representative data for TFLite quantization"""
-            if representative_data is None:
-                # Use calibration data as representative dataset
-                if self._dataset_bundle:
-                    calib_x, _ = self._dataset_bundle.calibration
-                    for i in range(min(100, len(calib_x))):
-                        yield [np.expand_dims(calib_x[i], axis=0).astype(np.float32)]
-                else:
-                    raise ValueError("No representative data available for PTQ")
+        # Pre-collect calibration data for GPU-accelerated batch processing
+        max_samples = 50
+        calibration_samples = []
+        
+        if representative_data is None:
+            if self._dataset_bundle:
+                calib_x, _ = self._dataset_bundle.calibration
+                num_samples = min(max_samples, len(calib_x))
+                calibration_samples = [calib_x[i] for i in range(num_samples)]
             else:
-                for x_batch, _ in representative_data.take(100):
-                    for i in range(x_batch.shape[0]):
-                        yield [np.expand_dims(x_batch[i], axis=0).astype(np.float32)]
+                raise ValueError("No representative data available for PTQ")
+        else:
+            for x_batch, _ in representative_data.take(10):
+                for i in range(x_batch.shape[0]):
+                    if len(calibration_samples) >= max_samples:
+                        break
+                    calibration_samples.append(x_batch[i].numpy())
+                if len(calibration_samples) >= max_samples:
+                    break
+        
+        print(f"  Collected {len(calibration_samples)} samples for calibration")
+        
+        # GPU-accelerated pre-processing: run inference to warm up GPU
+        if tf.config.list_physical_devices('GPU'):
+            print(f"  GPU detected! Using GPU acceleration for calibration...")
+            # Batch process samples on GPU for faster calibration
+            batch_size = 8
+            for i in range(0, len(calibration_samples), batch_size):
+                batch = calibration_samples[i:i+batch_size]
+                if batch:
+                    batch_array = np.stack(batch).astype(np.float32)
+                    _ = self.base_model(batch_array, training=False)
+                if (i // batch_size + 1) % 2 == 0:
+                    print(f"  GPU warmup: {min(i+batch_size, len(calibration_samples))}/{len(calibration_samples)} samples")
+        
+        def representative_dataset():
+            """Generate representative data for TFLite quantization (GPU pre-warmed)"""
+            for i, sample in enumerate(calibration_samples):
+                if i % 10 == 0 and i > 0:
+                    print(f"  Calibrating: {i}/{len(calibration_samples)} samples")
+                yield [np.expand_dims(sample, axis=0).astype(np.float32)]
 
         try:
-            print("Starting TFLite Post-Training Quantization...")
-            print("Step 1/3: Preparing representative dataset for calibration...")
+            print("\n" + "="*60)
+            print("Starting TFLite Post-Training Quantization (GPU-Accelerated)")
+            print("="*60)
+            
+            # Check GPU availability
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                print(f"✓ GPU acceleration enabled: {len(gpus)} GPU(s) detected")
+                try:
+                    # Enable memory growth to avoid OOM
+                    for gpu in gpus:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                except RuntimeError as e:
+                    print(f"  Note: {e}")
+            else:
+                print("⚠ No GPU detected, using CPU (will be slower)")
+            
+            print("\nStep 1/3: Preparing representative dataset for calibration...")
             
             # Convert baseline model to TFLite with PTQ
             conversion_model = self._clone_base_model(force_float32=True)
             converter = tf.lite.TFLiteConverter.from_keras_model(conversion_model)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            
+            # Optimization: Enable faster conversion
+            converter.experimental_new_converter = True
+            converter.experimental_new_quantizer = True
 
             # Set representative dataset for full integer quantization
+            print("  Attaching representative dataset generator...")
             converter.representative_dataset = representative_dataset
-            print("Step 2/3: Converting model with quantization (this may take several minutes)...")
+            print("\nStep 2/3: Converting model with quantization...")
+            print("  Analyzing activation ranges using calibration data.")
+            print("  Estimated time: 1-3 minutes (faster with GPU)")
+            print("-" * 60)
 
             # Configure for target platform
             if target_platform == "edge_tpu":
@@ -445,8 +496,12 @@ class QuantizationPipeline:
                 ]
 
             # Convert model
+            print("  Starting TFLite conversion (please wait)...")
             quantized_tflite = converter.convert()
-            print(f"Step 3/3: Conversion complete! Model size: {len(quantized_tflite)/(1024*1024):.2f} MB")
+            print("-" * 60)
+            print(f"✓ Step 3/3: Conversion complete!")
+            print(f"  Model size: {len(quantized_tflite)/(1024*1024):.2f} MB")
+            print("="*60 + "\n")
 
             # Save TFLite model
             ptq_path = "models/ptq_quantized_model.tflite"

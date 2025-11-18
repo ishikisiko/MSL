@@ -52,13 +52,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=128,
+        default=256,
         help="Batch size for evaluations.",
     )
     parser.add_argument(
         "--baseline-batch-size",
         type=int,
-        default=128,
+        default=256,
         help="Batch size for baseline training.",
     )
     parser.add_argument(
@@ -76,13 +76,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--baseline-lr",
         type=float,
-        default=1e-3,
+        default=2e-4,
         help="Base learning rate for the baseline schedule.",
     )
     parser.add_argument(
         "--baseline-weight-decay",
         type=float,
-        default=1e-4,
+        default=2e-4,
         help="Weight decay applied to the baseline optimizer.",
     )
     parser.add_argument(
@@ -99,7 +99,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--distillation-batch-size",
         type=int,
-        default=32,
+        default=64,
         help="Batch size for distillation training.",
     )
     parser.add_argument(
@@ -126,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--qat-epochs",
         type=int,
-        default=5,
+        default=10,
         help="Number of epochs for QAT fine-tuning.",
     )
     parser.add_argument(

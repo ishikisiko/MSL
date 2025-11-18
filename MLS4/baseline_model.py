@@ -18,6 +18,8 @@ def configure_efficientnet_gpu():
     # Disable layout optimization that causes issues with EfficientNet dropout layers
     os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
     os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    # Disable XLA JIT compilation to avoid layout errors
+    os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 
     # Configure GPU memory growth to prevent OOM errors
     gpus = tf.config.list_physical_devices('GPU')
@@ -26,12 +28,14 @@ def configure_efficientnet_gpu():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             
-            # Enable mixed precision for 2-3x training speedup
-            policy = mixed_precision.Policy('mixed_float16')
+            # Use FP32 for better compatibility with pruning/quantization/distillation
+            # Mixed precision (FP16/BF16) causes conflicts with tfmot and TFLite conversion
+            policy = mixed_precision.Policy('float32')
             mixed_precision.set_global_policy(policy)
             
             print(f"Configured GPU memory growth for {len(gpus)} GPU(s)")
-            print(f"Enabled mixed precision training (policy: {policy.name})")
+            print(f"Using FP32 precision for compatibility (policy: {policy.name})")
+            print(f"Note: FP32 ensures stability with pruning/quantization/distillation workflows")
         except RuntimeError as e:
             print(f"GPU memory configuration failed: {e}")
     else:

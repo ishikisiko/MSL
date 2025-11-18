@@ -565,38 +565,23 @@ class PruningComparator:
     ) -> tf.keras.Model:
         """Clone `model` while wrapping supported layers with pruning."""
         
-        # Save current mixed precision policy
-        from tensorflow.keras import mixed_precision
-        original_policy = mixed_precision.global_policy()
+        # No need to switch precision - baseline is already FP32
+        def maybe_prune(layer: tf.keras.layers.Layer):
+            if self._is_layer_prunable(layer):
+                return tfmot.sparsity.keras.prune_low_magnitude(
+                    layer,
+                    pruning_schedule=pruning_schedule,
+                )
+            return layer
+
+        # clone_model automatically copies the pretrained weights; avoid
+        # calling set_weights because pruning wrappers add mask variables.
+        pruned_model = tf.keras.models.clone_model(
+            model,
+            clone_function=maybe_prune,
+        )
         
-        # Temporarily switch to float32 for pruning (tfmot doesn't support mixed precision)
-        if original_policy.name != 'float32':
-            print(f"⚠️  临时禁用混合精度 ({original_policy.name} -> float32) 以兼容剪枝库")
-            mixed_precision.set_global_policy('float32')
-
-        try:
-            def maybe_prune(layer: tf.keras.layers.Layer):
-                if self._is_layer_prunable(layer):
-                    return tfmot.sparsity.keras.prune_low_magnitude(
-                        layer,
-                        pruning_schedule=pruning_schedule,
-                    )
-                return layer
-
-            # clone_model automatically copies the pretrained weights; avoid
-            # calling set_weights because pruning wrappers add mask variables.
-            pruned_model = tf.keras.models.clone_model(
-                model,
-                clone_function=maybe_prune,
-            )
-            
-            return pruned_model
-            
-        finally:
-            # Restore original precision policy
-            if original_policy.name != 'float32':
-                mixed_precision.set_global_policy(original_policy.name)
-                print(f"✓ 恢复混合精度策略: {original_policy.name}")
+        return pruned_model
 
     def _is_layer_prunable(self, layer: tf.keras.layers.Layer) -> bool:
         registry = getattr(tfmot.sparsity.keras, "pruning_registry", None)
