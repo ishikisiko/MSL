@@ -15,3 +15,10 @@ _FLAG_NAME: Final[str] = "TF_USE_LEGACY_KERAS"
 # compatible with prune_low_magnitude when running on newer Keras builds.
 if os.environ.get(_FLAG_NAME) not in {"1", "true", "True"}:
     os.environ.setdefault(_FLAG_NAME, "1")
+
+# Fix EfficientNet GPU layout optimization issues
+# Disable layout optimization that causes issues with EfficientNet dropout layers
+os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
+os.environ['TF_DETERMINISTIC_OPS'] = '1'
+# Disable XLA JIT compilation to avoid layout errors
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'

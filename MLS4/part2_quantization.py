@@ -775,9 +775,12 @@ class QuantizationPipeline:
                 qat_model = tfmot.quantization.keras.quantize_apply(annotated_model)
 
             # Compile QAT model with lower learning rate for fine-tuning
+            # Deserialize loss config to object to avoid Keras interpreting dict as output mapping
+            loss_obj = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+            
             qat_model.compile(
                 optimizer=tf.keras.optimizers.Adam(learning_rate=fine_tune_learning_rate),
-                loss=self._loss_config,
+                loss=loss_obj,
                 metrics=['accuracy']
             )
 
