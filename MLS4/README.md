@@ -9,9 +9,8 @@ It is recommended to use a virtual environment to manage dependencies.
 conda create -n tf220 python=3.10 -y
 conda activate tf220
 
-# 2. 升级 pip
-python -m pip install --upgrade pip
-
+git clone https://github.com/ishikisiko/MSL.git
+cd MSL/MLS4
 # 3. 装 GPU 版 TF（会自动拉配套的 CUDA/cuDNN）
 python -m pip install "tensorflow[and-cuda]"
 # 安装 legacy 版 Keras（与 tf.keras 对应）

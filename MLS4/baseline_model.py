@@ -17,7 +17,7 @@ def configure_efficientnet_gpu():
     """Configure GPU settings to fix EfficientNet layout optimization errors"""
     # Disable layout optimization that causes issues with EfficientNet dropout layers
     os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
-    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_DETERMINISTIC_OPS'] = '0'
     # Disable XLA JIT compilation to avoid layout errors
     os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 
