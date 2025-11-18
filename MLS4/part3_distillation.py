@@ -219,6 +219,7 @@ class DistillationFramework:
             # using the dataset directly and passing steps_per_epoch to
             # .fit avoids exhausting a finite iterator across epochs.
             epoch_train_ds = train_ds
+            val_steps = max(1, steps_per_epoch // 4)
             
             print(f"开始训练: temperature={temperature:.2f}, epochs={epochs}, steps_per_epoch={steps_per_epoch}")
             
@@ -226,7 +227,8 @@ class DistillationFramework:
                 epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
-                validation_data=val_ds.take(max(1, steps_per_epoch // 4)),
+                validation_data=val_ds.repeat(),
+                validation_steps=val_steps,
                 verbose=2,  # Show progress bars
             )
             accuracy = float(
@@ -283,11 +285,13 @@ class DistillationFramework:
             # pass it directly so Keras pulls steps_per_epoch batches each
             # epoch from the repeating dataset.
             epoch_train_ds = train_ds
+            val_steps = max(1, steps_per_epoch // 4)
             history = distiller.fit(
                 epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
-                validation_data=val_ds.take(max(1, steps_per_epoch // 4)),
+                validation_data=val_ds.repeat(),
+                validation_steps=val_steps,
                 verbose=0,
             )
             accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
