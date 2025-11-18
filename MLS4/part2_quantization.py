@@ -399,26 +399,82 @@ class QuantizationPipeline:
         """Implement standard TFLite post-training quantization with GPU acceleration"""
 
         # Pre-collect calibration data for GPU-accelerated batch processing
-        max_samples = 50
+        # FIX: Increase from 50 to 1000 samples for better calibration
+        max_samples = 1000
         calibration_samples = []
-        
+        sample_labels = []  # Track labels to ensure class coverage
+
         if representative_data is None:
             if self._dataset_bundle:
-                calib_x, _ = self._dataset_bundle.calibration
+                calib_x, calib_y = self._dataset_bundle.calibration
+
+                # FIX: Implement intelligent sampling to ensure class coverage
                 num_samples = min(max_samples, len(calib_x))
-                calibration_samples = [calib_x[i] for i in range(num_samples)]
+
+                # Stratified sampling: try to get samples from all classes
+                calib_y_flat = [int(y) if hasattr(y, 'item') else y for y in calib_y]
+                class_to_indices = {}
+                for idx, label in enumerate(calib_y_flat):
+                    if label not in class_to_indices:
+                        class_to_indices[label] = []
+                    class_to_indices[label].append(idx)
+
+                # Sample from each class
+                samples_per_class = max(1, num_samples // len(class_to_indices))
+                for class_label, indices in class_to_indices.items():
+                    if len(calibration_samples) >= num_samples:
+                        break
+                    # Take samples from this class
+                    n_take = min(samples_per_class, len(indices), num_samples - len(calibration_samples))
+                    selected_indices = indices[:n_take]
+                    calibration_samples.extend([calib_x[i] for i in selected_indices])
+                    sample_labels.extend([calib_y[i] for i in selected_indices])
+
+                # If still need more samples, randomly sample from remaining
+                if len(calibration_samples) < num_samples:
+                    remaining = num_samples - len(calibration_samples)
+                    all_indices = set(range(len(calib_x)))
+                    used_indices = set(i for sample in calibration_samples for i in range(len(calib_x)) if np.array_equal(calib_x[i], sample))
+                    remaining_indices = list(all_indices - used_indices)
+                    if remaining_indices:
+                        selected_indices = np.random.choice(remaining_indices, min(remaining, len(remaining_indices)), replace=False)
+                        calibration_samples.extend([calib_x[i] for i in selected_indices])
+                        sample_labels.extend([calib_y[i] for i in selected_indices])
             else:
                 raise ValueError("No representative data available for PTQ")
         else:
-            for x_batch, _ in representative_data.take(10):
+            # FIX: Sample from more batches to get better representation
+            batch_count = 0
+            max_batches = 100  # Increase from 10 to 100 batches
+            for x_batch, y_batch in representative_data.take(max_batches):
+                batch_count += 1
                 for i in range(x_batch.shape[0]):
                     if len(calibration_samples) >= max_samples:
                         break
                     calibration_samples.append(x_batch[i].numpy())
+                    sample_labels.append(y_batch[i].numpy())
                 if len(calibration_samples) >= max_samples:
                     break
-        
-        print(f"  Collected {len(calibration_samples)} samples for calibration")
+
+        # Ensure we have enough samples and diverse representation
+        if len(calibration_samples) < 100:
+            print(f"  WARNING: Only {len(calibration_samples)} samples collected, need at least 100")
+            print(f"  Consider increasing dataset size or reducing max_samples")
+
+        # FIX: Check class distribution
+        if sample_labels:
+            unique_labels = set()
+            for label in sample_labels:
+                if hasattr(label, 'item'):
+                    unique_labels.add(int(label))
+                elif isinstance(label, (int, np.integer)):
+                    unique_labels.add(int(label))
+                elif len(label) > 0:  # multi-dimensional label
+                    unique_labels.add(int(label[0]))
+
+            print(f"  Collected {len(calibration_samples)} samples covering {len(unique_labels)} unique classes")
+
+        print(f"  Calibration samples: {len(calibration_samples)} (recommended: 500-1000 for CIFAR-100)")
         
         # GPU-accelerated pre-processing: run inference to warm up GPU
         if tf.config.list_physical_devices('GPU'):
@@ -478,10 +534,13 @@ class QuantizationPipeline:
             print("-" * 60)
 
             # Configure for target platform
+            # FIX: Improve quantization configuration for better accuracy
             if target_platform == "edge_tpu":
                 converter.target_spec.supported_ops = [
                     tf.lite.OpsSet.TFLITE_BUILTINS_INT8
                 ]
+                converter.inference_input_type = tf.uint8
+                converter.inference_output_type = tf.uint8
             elif target_platform == "arm_cortex_m":
                 converter.target_spec.supported_ops = [
                     tf.lite.OpsSet.TFLITE_BUILTINS_INT8
@@ -489,15 +548,36 @@ class QuantizationPipeline:
                 converter.inference_input_type = tf.int8
                 converter.inference_output_type = tf.int8
             else:
-                # Generic platform
+                # Generic platform - FIX: Use INT8 for better quantization
                 converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.TFLITE_BUILTINS,
                     tf.lite.OpsSet.TFLITE_BUILTINS_INT8
                 ]
+                # Keep input/output as FLOAT32 for generic compatibility
+                converter.inference_input_type = tf.float32
+                converter.inference_output_type = tf.float32
+
+            # FIX: Additional quantization optimizations
+            # Enable layer fusion and arithmetic optimization
+            converter._experimental_new_quantizer = True
+            converter._experimental_new_converter = True
 
             # Convert model
             print("  Starting TFLite conversion (please wait)...")
-            quantized_tflite = converter.convert()
+            print(f"  Config: ops={converter.target_spec.supported_ops}, in_type={converter.inference_input_type}, out_type={converter.inference_output_type}")
+
+            try:
+                quantized_tflite = converter.convert()
+            except Exception as e:
+                # FIX: Fallback to dynamic range quantization if full integer fails
+                print(f"  ⚠️  Full integer quantization failed: {e}")
+                print("  Falling back to dynamic range quantization...")
+
+                converter_fallback = tf.lite.TFLiteConverter.from_keras_model(conversion_model)
+                converter_fallback.optimizations = [tf.lite.Optimize.DEFAULT]
+                quantized_tflite = converter_fallback.convert()
+
+                print(f"  ✓ Fallback conversion successful using dynamic range quantization")
+
             print("-" * 60)
             print(f"✓ Step 3/3: Conversion complete!")
             print(f"  Model size: {len(quantized_tflite)/(1024*1024):.2f} MB")
@@ -686,12 +766,47 @@ class QuantizationPipeline:
             print(f"Starting QAT fine-tuning for {epochs} epochs...")
             start_time = time.perf_counter()
 
-            # Proper dataset handling to avoid OUT_OF_RANGE errors
-            train_ds_for_qat = train_dataset.take(steps_per_epoch)
+            # Fix: Ensure dataset outputs match model input shape
+            # Check a sample from the dataset to verify shape
+            for x_sample, y_sample in train_dataset.take(1):
+                if len(x_sample.shape) == 5:
+                    print(f"WARNING: Input has extra dimension (shape={x_sample.shape}). Squeezing...")
+                    # If dataset returns 5D tensor (e.g., [batch, 1, height, width, channels])
+                    # we need to squeeze it to 4D [batch, height, width, channels]
+                    x_sample = tf.squeeze(x_sample, axis=1)
+                elif len(x_sample.shape) != 4:
+                    print(f"ERROR: Unexpected input shape: {x_sample.shape}")
+                    raise ValueError(f"Expected 4D input (batch, height, width, channels), got {x_sample.shape}")
+                print(f"Input shape confirmed: {x_sample.shape}")
+                break
+
+            # Ensure validation dataset also has correct shape
+            for x_val, y_val in validation_dataset.take(1):
+                if len(x_val.shape) == 5:
+                    print(f"WARNING: Validation input has extra dimension (shape={x_val.shape}). Squeezing...")
+                    x_val = tf.squeeze(x_val, axis=1)
+                print(f"Validation input shape confirmed: {x_val.shape}")
+                break
+
+            # Create clean dataset wrappers that ensure correct shapes
+            def _ensure_shape(x, y):
+                # Ensure input is 4D: [batch, height, width, channels]
+                if len(x.shape) == 5:
+                    x = tf.squeeze(x, axis=1)
+                elif len(x.shape) != 4:
+                    raise ValueError(f"Unexpected input shape: {x.shape}")
+                return x, y
+
+            # Apply shape correction to datasets
+            train_ds_for_qat = train_dataset.map(_ensure_shape, num_parallel_calls=AUTOTUNE)
+            val_ds_corrected = validation_dataset.map(_ensure_shape, num_parallel_calls=AUTOTUNE)
+
+            # Take only the required number of steps for training
+            train_ds_for_qat = train_ds_for_qat.take(steps_per_epoch)
 
             history = qat_model.fit(
                 train_ds_for_qat,
-                validation_data=validation_dataset,
+                validation_data=val_ds_corrected,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
                 verbose=1
