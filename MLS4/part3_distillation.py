@@ -121,6 +121,12 @@ class DistillationFramework:
         cache_datasets: bool = True,
         batch_size: int = 32,
     ) -> None:
+        # Switch to float32 globally for distillation to avoid LossScaleOptimizer warnings
+        self._original_policy = mixed_precision.global_policy()
+        if self._original_policy.name != 'float32':
+            print(f"⚠️  切换到 float32 以兼容蒸馏训练 (原策略: {self._original_policy.name})")
+            mixed_precision.set_global_policy('float32')
+        
         self.teacher = self._clone_model_float32(teacher_model)
         self.student_arch = student_architecture
         self.distillation_results: Dict[str, Dict] = {}
@@ -399,62 +405,63 @@ class DistillationFramework:
         """
         Align intermediate representations between teacher and student.
         """
+        
+        with _precision_guard("float32"):
+            student = self._build_student(width_multiplier)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4)
+            metric = tf.keras.metrics.SparseCategoricalAccuracy()
+            val_ds = self._get_dataset("val")
 
-        student = self._build_student(width_multiplier)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=2e-4)
-        metric = tf.keras.metrics.SparseCategoricalAccuracy()
-        val_ds = self._get_dataset("val")
+            if layer_pairs is None:
+                teacher_convs = [layer.name for layer in self.teacher.layers if isinstance(layer, tf.keras.layers.Conv2D)]
+                student_convs = [layer.name for layer in student.layers if isinstance(layer, tf.keras.layers.Conv2D)]
+                layer_pairs = list(zip(teacher_convs[-3:], student_convs[-3:]))
+            layer_pairs = [pair for pair in layer_pairs if pair[0] and pair[1]]
+            if not layer_pairs:
+                raise RuntimeError("No convolutional layer pairs available for feature matching.")
 
-        if layer_pairs is None:
-            teacher_convs = [layer.name for layer in self.teacher.layers if isinstance(layer, tf.keras.layers.Conv2D)]
-            student_convs = [layer.name for layer in student.layers if isinstance(layer, tf.keras.layers.Conv2D)]
-            layer_pairs = list(zip(teacher_convs[-3:], student_convs[-3:]))
-        layer_pairs = [pair for pair in layer_pairs if pair[0] and pair[1]]
-        if not layer_pairs:
-            raise RuntimeError("No convolutional layer pairs available for feature matching.")
+            teacher_features = tf.keras.Model(
+                self.teacher.inputs,
+                [self.teacher.get_layer(t_name).output for t_name, _ in layer_pairs],
+            )
+            student_features = tf.keras.Model(
+                student.inputs,
+                [student.get_layer(s_name).output for _, s_name in layer_pairs],
+            )
 
-        teacher_features = tf.keras.Model(
-            self.teacher.inputs,
-            [self.teacher.get_layer(t_name).output for t_name, _ in layer_pairs],
-        )
-        student_features = tf.keras.Model(
-            student.inputs,
-            [student.get_layer(s_name).output for _, s_name in layer_pairs],
-        )
+            history = {"feature_loss": [], "accuracy": []}
+            # Remove .take().repeat() to fix OUT_OF_RANGE errors
+            train_ds = self._get_dataset("train")
 
-        history = {"feature_loss": [], "accuracy": []}
-        # Remove .take().repeat() to fix OUT_OF_RANGE errors
-        train_ds = self._get_dataset("train")
-
-        for _ in range(epochs):
-            metric.reset_state()
-            feature_losses = []
-            for images, labels in train_ds.take(steps_per_epoch):
-                with tf.GradientTape() as tape:
-                    student_logits = student(images, training=True)
-                    teacher_acts = teacher_features(images, training=False)
-                    student_acts = student_features(images, training=True)
-                    feat_loss = self._feature_loss(teacher_acts, student_acts)
-                    ce_loss = tf.reduce_mean(
-                        tf.keras.losses.sparse_categorical_crossentropy(
-                            labels, student_logits
+            for _ in range(epochs):
+                metric.reset_state()
+                feature_losses = []
+                for images, labels in train_ds.take(steps_per_epoch):
+                    with tf.GradientTape() as tape:
+                        student_logits = student(images, training=True)
+                        teacher_acts = teacher_features(images, training=False)
+                        student_acts = student_features(images, training=True)
+                        feat_loss = self._feature_loss(teacher_acts, student_acts)
+                        ce_loss = tf.reduce_mean(
+                            tf.keras.losses.sparse_categorical_crossentropy(
+                                labels, student_logits
+                            )
                         )
-                    )
-                    loss = ce_loss + 0.3 * feat_loss
-                grads = tape.gradient(loss, student.trainable_variables)
-                optimizer.apply_gradients(zip(grads, student.trainable_variables))
-                metric.update_state(labels, student_logits)
-                feature_losses.append(float(feat_loss))
-            history["feature_loss"].append(float(np.mean(feature_losses)))
-            history["accuracy"].append(float(metric.result()))
+                        loss = ce_loss + 0.3 * feat_loss
+                    grads = tape.gradient(loss, student.trainable_variables)
+                    optimizer.apply_gradients(zip(grads, student.trainable_variables))
+                    metric.update_state(labels, student_logits)
+                    feature_losses.append(float(feat_loss))
+                history["feature_loss"].append(float(np.mean(feature_losses)))
+                history["accuracy"].append(float(metric.result()))
 
-        accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
-        results = {
-            "layer_pairs": layer_pairs,
-            "feature_loss_history": history["feature_loss"],
-            "student_model": student,
-            "accuracy": accuracy,
-        }
+            accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
+            results = {
+                "layer_pairs": layer_pairs,
+                "feature_loss_history": history["feature_loss"],
+                "student_model": student,
+                "accuracy": accuracy,
+            }
         self.distillation_results["feature_matching"] = results
         return results
 
@@ -468,52 +475,53 @@ class DistillationFramework:
         """
         Distill from an ensemble of noisy teachers built from the baseline.
         """
+        
+        with _precision_guard("float32"):
+            teachers = [self._noisy_teacher_copy(scale=0.01 * (idx + 1)) for idx in range(ensemble_size)]
+            student = self._build_student(width_multiplier)
+            optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
+            metric = tf.keras.metrics.SparseCategoricalAccuracy()
+            val_ds = self._get_dataset("val")
+            # Remove .take().repeat() to fix OUT_OF_RANGE errors
+            train_ds = self._get_dataset("train")
 
-        teachers = [self._noisy_teacher_copy(scale=0.01 * (idx + 1)) for idx in range(ensemble_size)]
-        student = self._build_student(width_multiplier)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=3e-4)
-        metric = tf.keras.metrics.SparseCategoricalAccuracy()
-        val_ds = self._get_dataset("val")
-        # Remove .take().repeat() to fix OUT_OF_RANGE errors
-        train_ds = self._get_dataset("train")
-
-        history = {"loss": [], "accuracy": []}
-        for _ in range(epochs):
-            metric.reset_state()
-            losses = []
-            for images, labels in train_ds.take(steps_per_epoch):
-                with tf.GradientTape() as tape:
-                    student_logits = student(images, training=True)
-                    ensemble_logits = tf.reduce_mean(
-                        tf.stack([teacher(images, training=False) for teacher in teachers], axis=0),
-                        axis=0,
-                    )
-                    hard_loss = tf.reduce_mean(
-                        tf.keras.losses.sparse_categorical_crossentropy(labels, student_logits)
-                    )
-                    soft_loss = tf.reduce_mean(
-                        tf.keras.losses.kullback_leibler_divergence(
-                            tf.nn.softmax(ensemble_logits, axis=-1),
-                            tf.nn.softmax(student_logits, axis=-1),
+            history = {"loss": [], "accuracy": []}
+            for _ in range(epochs):
+                metric.reset_state()
+                losses = []
+                for images, labels in train_ds.take(steps_per_epoch):
+                    with tf.GradientTape() as tape:
+                        student_logits = student(images, training=True)
+                        ensemble_logits = tf.reduce_mean(
+                            tf.stack([teacher(images, training=False) for teacher in teachers], axis=0),
+                            axis=0,
                         )
-                    )
-                    loss = 0.5 * hard_loss + 0.5 * soft_loss
-                grads = tape.gradient(loss, student.trainable_variables)
-                optimizer.apply_gradients(zip(grads, student.trainable_variables))
-                metric.update_state(labels, student_logits)
-                losses.append(float(loss))
-            history["loss"].append(float(np.mean(losses)))
-            history["accuracy"].append(float(metric.result()))
+                        hard_loss = tf.reduce_mean(
+                            tf.keras.losses.sparse_categorical_crossentropy(labels, student_logits)
+                        )
+                        soft_loss = tf.reduce_mean(
+                            tf.keras.losses.kullback_leibler_divergence(
+                                tf.nn.softmax(ensemble_logits, axis=-1),
+                                tf.nn.softmax(student_logits, axis=-1),
+                            )
+                        )
+                        loss = 0.5 * hard_loss + 0.5 * soft_loss
+                    grads = tape.gradient(loss, student.trainable_variables)
+                    optimizer.apply_gradients(zip(grads, student.trainable_variables))
+                    metric.update_state(labels, student_logits)
+                    losses.append(float(loss))
+                history["loss"].append(float(np.mean(losses)))
+                history["accuracy"].append(float(metric.result()))
 
-        accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
-        results = {
-            "ensemble_teacher_accuracy": [
-                float(teacher.evaluate(val_ds, verbose=0)[1]) for teacher in teachers
-            ],
-            "student_model": student,
-            "accuracy": accuracy,
-            "history": history,
-        }
+            accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
+            results = {
+                "ensemble_teacher_accuracy": [
+                    float(teacher.evaluate(val_ds, verbose=0)[1]) for teacher in teachers
+                ],
+                "student_model": student,
+                "accuracy": accuracy,
+                "history": history,
+            }
         self.distillation_results["self_distillation"] = results
         return results
 
