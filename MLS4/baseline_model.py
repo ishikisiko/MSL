@@ -577,6 +577,7 @@ def train_baseline_model(
         num_classes=num_classes,
         drop_remainder=True,
         mixup_alpha=mixup_alpha,
+        seed=seed,
     )
     val_ds = _build_dataset(
         x_val,
@@ -585,6 +586,7 @@ def train_baseline_model(
         augment=False,
         shuffle=False,
         num_classes=num_classes,
+        seed=seed,
     )
     test_ds = _build_dataset(
         x_test,
@@ -593,6 +595,7 @@ def train_baseline_model(
         augment=False,
         shuffle=False,
         num_classes=num_classes,
+        seed=seed,
     )
     bn_ds = _build_dataset(
         x_train,
@@ -601,6 +604,7 @@ def train_baseline_model(
         augment=False,
         shuffle=False,
         num_classes=num_classes,
+        seed=seed,
     )
 
     csv_logger = tf.keras.callbacks.CSVLogger(str(RESULTS_DIR / "baseline_training_log.csv"), append=False)
@@ -694,6 +698,7 @@ def _build_dataset(
     num_classes: Optional[int] = None,
     drop_remainder: bool = False,
     mixup_alpha: Optional[float] = None,
+    seed: int = 1337,
 ) -> tf.data.Dataset:
     features = np.asarray(features, dtype=np.float32)
     labels_array = np.asarray(labels)
@@ -703,7 +708,7 @@ def _build_dataset(
     ds = tf.data.Dataset.from_tensor_slices((features, labels_array))
     if shuffle:
         buffer = min(len(features), 10000)
-        ds = ds.shuffle(buffer_size=buffer, seed=1337, reshuffle_each_iteration=True)
+        ds = ds.shuffle(buffer_size=buffer, seed=seed, reshuffle_each_iteration=True)
     if augment:
         ds = ds.map(_augment_batch, num_parallel_calls=AUTOTUNE)
     ds = ds.batch(batch_size, drop_remainder=drop_remainder)

@@ -134,6 +134,12 @@ def parse_args() -> argparse.Namespace:
         help="Skip new TFLite quantization (only run legacy quantization).",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility.",
+    )
+    parser.add_argument(
         "--skip-distillation",
         action="store_true",
         help="Skip distillation experiments.",
@@ -151,6 +157,14 @@ def to_dataset(x, y, batch_size):
 
 def main() -> None:
     args = parse_args()
+
+    # Set random seeds for reproducibility
+    seed = args.seed
+    tf.keras.utils.set_random_seed(seed)
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+    print(f"Random seeds set to {seed} for reproducibility")
+
     baseline_path = Path(args.baseline_path)
     ema_decay = None if args.disable_ema or args.ema_decay >= 1.0 else args.ema_decay
     training_summary = None
@@ -169,6 +183,7 @@ def main() -> None:
             base_learning_rate=args.baseline_lr,
             weight_decay=args.baseline_weight_decay,
             ema_decay=ema_decay,
+            seed=seed,
         )
 
     baseline_model = tf.keras.models.load_model(baseline_path, custom_objects=CUSTOM_OBJECTS)
@@ -181,7 +196,7 @@ def main() -> None:
         x_test,
         y_test,
         calibration_data,
-    ) = prepare_compression_datasets()
+    ) = prepare_compression_datasets(seed=seed)
     train_ds = to_dataset(x_train, y_train, args.batch_size)
     val_ds = to_dataset(x_val, y_val, args.batch_size)
     test_ds = to_dataset(x_test, y_test, args.batch_size)
