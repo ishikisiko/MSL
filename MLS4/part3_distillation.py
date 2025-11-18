@@ -60,6 +60,8 @@ class SimpleDistiller(tf.keras.Model):
         self.distillation_loss_fn = tf.keras.losses.KLDivergence()
 
     def compile(self, optimizer, metrics, **kwargs):
+        # Disable XLA JIT compilation to avoid layout errors with EfficientNet Dropout layers
+        kwargs['jit_compile'] = False
         super().compile(optimizer=optimizer, metrics=metrics, **kwargs)
 
     def train_step(self, data):
@@ -568,11 +570,9 @@ class DistillationFramework:
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
             ds = ds.map(lambda img, label: (tf.cast(img, tf.float32), label), num_parallel_calls=AUTOTUNE)
             
-            # Use drop_remainder only for training to prevent XLA layout
-            # errors when dynamic shapes are present. Validation and test sets
-            # should keep the final smaller batch so evaluation does not
-            # accidentally yield an empty dataset.
-            ds = ds.batch(self.batch_size, drop_remainder=is_training)
+            # CRITICAL: Always use drop_remainder=True to ensure consistent batch shapes
+            # This prevents XLA JIT compilation errors and excessive retracing
+            ds = ds.batch(self.batch_size, drop_remainder=True)
             
             if is_training:
                 ds = ds.repeat()
@@ -587,21 +587,6 @@ class DistillationFramework:
             val_size=len(x_val),
             test_size=len(x_test),
         )
-
-        # Validation/test may be smaller than the chosen batch size which
-        # would produce empty datasets if drop_remainder=True. We guard by
-        # warning the user and recommending a smaller batch size.
-        if bundle.val_size < self.batch_size:
-            print(
-                f"Warning: val dataset size ({bundle.val_size}) is smaller than "
-                f"distillation batch size ({self.batch_size}). This may result in "
-                "empty evaluation batches if drop_remainder=True."
-            )
-        if bundle.test_size < self.batch_size:
-            print(
-                f"Warning: test dataset size ({bundle.test_size}) is smaller than "
-                f"distillation batch size ({self.batch_size})."
-            )
 
         return bundle
 

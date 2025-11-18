@@ -15,12 +15,18 @@ from tensorflow.keras import mixed_precision
 # Fix EfficientNet GPU layout optimization issues
 def configure_efficientnet_gpu():
     """Configure GPU settings to fix EfficientNet layout optimization errors"""
-    # Disable layout optimization that causes issues with EfficientNet dropout layers
+    # CRITICAL: Disable XLA JIT compilation completely to avoid layout errors
+    # with EfficientNet's Dropout layers during distillation
+    os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0'
+    os.environ['TF_DISABLE_XLA_JIT'] = '1'
+    
+    # Disable layout and graph optimizations that cause issues
     os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
     os.environ['TF_DETERMINISTIC_OPS'] = '0'
     os.environ['TF_CUDNN_DETERMINISTIC'] = '0'
-    # Disable XLA JIT compilation to avoid layout errors
-    os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+    
+    # Disable autograph to reduce retracing warnings
+    os.environ['TF_ENABLE_AUTOGRAPH'] = '0'
 
     # Configure GPU memory growth to prevent OOM errors
     gpus = tf.config.list_physical_devices('GPU')
@@ -29,6 +35,9 @@ def configure_efficientnet_gpu():
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             
+            # Disable JIT compilation at TF optimizer level
+            tf.config.optimizer.set_jit(False)
+            
             # Use FP32 for better compatibility with pruning/quantization/distillation
             # Mixed precision (FP16/BF16) causes conflicts with tfmot and TFLite conversion
             policy = mixed_precision.Policy('float32')
@@ -36,6 +45,7 @@ def configure_efficientnet_gpu():
             
             print(f"Configured GPU memory growth for {len(gpus)} GPU(s)")
             print(f"Using FP32 precision for compatibility (policy: {policy.name})")
+            print(f"XLA JIT compilation DISABLED to avoid EfficientNet layout errors")
             print(f"Note: FP32 ensures stability with pruning/quantization/distillation workflows")
         except RuntimeError as e:
             print(f"GPU memory configuration failed: {e}")

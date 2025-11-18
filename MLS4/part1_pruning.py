@@ -6,6 +6,8 @@ import numpy as np
 import tf_compat  # noqa: F401  # force tf.keras legacy mode for tfmot pruning
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
+import tempfile
+import os
 
 from baseline_model import CUSTOM_OBJECTS, prepare_compression_datasets
 
@@ -121,6 +123,7 @@ class PruningComparator:
         early_stopping_patience: int = 8,
         save_path: Optional[str] = None,
         save_tflite_path: Optional[str] = None,
+        pruning_log_dir: Optional[str] = None,
         use_layer_wise_sparsity: bool = True,
         use_warmup: bool = True,
     ) -> Dict:
@@ -201,6 +204,23 @@ class PruningComparator:
             batch_size=batch_size,
         )
 
+        # Create a directory for pruning TensorBoard logs. If `pruning_log_dir`
+        # is supplied it takes precedence; otherwise we place logs
+        # alongside `save_path` if present and fall back to the system temp
+        # directory.
+        if pruning_log_dir:
+            log_dir = pruning_log_dir
+        elif save_path:
+            try:
+                save_dir = os.path.dirname(save_path) or save_path
+                log_dir = os.path.join(save_dir, "pruning_logs")
+            except Exception:
+                log_dir = os.path.join(tempfile.gettempdir(), "pruning_logs")
+        else:
+            log_dir = os.path.join(tempfile.gettempdir(), "pruning_logs")
+
+        os.makedirs(log_dir, exist_ok=True)
+
         callbacks = [
             tfmot.sparsity.keras.UpdatePruningStep(),
             tf.keras.callbacks.EarlyStopping(
@@ -218,6 +238,10 @@ class PruningComparator:
                 mode="min",
                 verbose=1,
             ),
+            # Add pruning summaries as a callback so the TensorBoard logs
+            # are written during training. PruningSummaries requires a
+            # `log_dir` argument (positional), which was missing previously.
+            tfmot.sparsity.keras.PruningSummaries(log_dir=log_dir, update_freq="epoch"),
         ]
 
         history = pruned_model.fit(
@@ -235,8 +259,10 @@ class PruningComparator:
         actual_sparsity_during_training = total_zeros / total_params if total_params > 0 else 0.0
         print(f"训练后实际稀疏度 (带wrapper): {actual_sparsity_during_training:.2%}")
 
-        # Finalize pruning to ensure masks are applied correctly
-        tfmot.sparsity.keras.PruningSummaries(update_freq='epoch')(pruned_model)
+        # Note: `PruningSummaries` is a callback and is already added above
+        # to `callbacks`. No direct call is required here — calling the
+        # callback constructor without `log_dir` caused the TypeError. We
+        # still finalize pruning by stripping wrappers below.
         
         stripped_model = self._strip_and_compile(pruned_model)
         final_accuracy = self._evaluate_accuracy(stripped_model, val_ds)
@@ -292,6 +318,7 @@ class PruningComparator:
         learning_rate: float = 1e-3,
         early_stopping_patience: int = 5,
         save_path: Optional[str] = None,
+        pruning_log_dir: Optional[str] = None,
         save_tflite_path: Optional[str] = None,
         use_layer_wise_sparsity: bool = True,
     ) -> Dict:
@@ -312,6 +339,20 @@ class PruningComparator:
 
         # Start with the base model
         current_model = self._clone_and_compile(learning_rate=learning_rate)
+
+        # Prepare pruning logging directory (shared across stages).
+        if pruning_log_dir:
+            stage_log_dir = pruning_log_dir
+        elif save_path:
+            try:
+                save_dir = os.path.dirname(save_path) or save_path
+                stage_log_dir = os.path.join(save_dir, "pruning_logs")
+            except Exception:
+                stage_log_dir = os.path.join(tempfile.gettempdir(), "pruning_logs")
+        else:
+            stage_log_dir = os.path.join(tempfile.gettempdir(), "pruning_logs")
+
+        os.makedirs(stage_log_dir, exist_ok=True)
 
         for stage_idx, stage_sparsity in enumerate(sparsity_stages, 1):
             print(f"\n{'='*60}")
@@ -392,6 +433,7 @@ class PruningComparator:
                     mode="min",
                     verbose=1,
                 ),
+                tfmot.sparsity.keras.PruningSummaries(log_dir=stage_log_dir, update_freq="epoch"),
             ]
 
             # Train for this stage
@@ -410,8 +452,9 @@ class PruningComparator:
             actual_sparsity_during_training = total_zeros / total_params if total_params > 0 else 0.0
             print(f"训练后实际稀疏度 (带wrapper): {actual_sparsity_during_training:.2%}")
 
-            # Finalize pruning to ensure masks are applied correctly
-            tfmot.sparsity.keras.PruningSummaries(update_freq='epoch')(pruned_model)
+            # `PruningSummaries` already added as callback for each stage above
+            # (it logs masks to the chosen `log_dir`). We don't call it directly
+            # — calling without `log_dir` will raise a TypeError.
             
             # Strip pruning wrappers and evaluate
             stripped_model = self._strip_and_compile(pruned_model)
