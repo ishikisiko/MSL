@@ -549,12 +549,16 @@ class QuantizationPipeline:
                 converter.inference_output_type = tf.int8
             else:
                 # Generic platform - FIX: Use INT8 for better quantization
+                # Allow fallback to float for ops that don't support INT8 or cause issues
                 converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8,
+                    tf.lite.OpsSet.TFLITE_BUILTINS
                 ]
                 # Keep input/output as FLOAT32 for generic compatibility
                 converter.inference_input_type = tf.float32
                 converter.inference_output_type = tf.float32
+                # Allow custom ops just in case
+                converter.allow_custom_ops = True
 
             # FIX: Additional quantization optimizations
             # Enable layer fusion and arithmetic optimization
@@ -751,9 +755,24 @@ class QuantizationPipeline:
             import tensorflow_model_optimization as tfmot
 
             # Apply QAT to a float32 clone of the baseline model
-            quantize_model = tfmot.quantization.keras.quantize_model
+            # Use selective quantization to avoid issues with Resizing/ZeroPadding layers
             float32_clone = self._clone_base_model(force_float32=True)
-            qat_model = quantize_model(float32_clone)
+            
+            def apply_quantization_to_layer(layer):
+                # Only quantize layers with weights that benefit from it
+                if isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.Dense, tf.keras.layers.DepthwiseConv2D)):
+                    return tfmot.quantization.keras.quantize_annotate_layer(layer)
+                return layer
+
+            # Annotate the model
+            annotated_model = tf.keras.models.clone_model(
+                float32_clone,
+                clone_function=apply_quantization_to_layer,
+            )
+
+            # Apply quantization scheme
+            with tfmot.quantization.keras.quantize_scope():
+                qat_model = tfmot.quantization.keras.quantize_apply(annotated_model)
 
             # Compile QAT model with lower learning rate for fine-tuning
             qat_model.compile(
