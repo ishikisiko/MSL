@@ -3,17 +3,34 @@ from __future__ import annotations
 import math
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import tf_compat  # noqa: F401  # enforce legacy tf.keras mode for compatibility
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
 from baseline_model import CUSTOM_OBJECTS, prepare_compression_datasets
 
 
 AUTOTUNE = tf.data.AUTOTUNE
+
+
+@contextmanager
+def _temporary_precision_policy(policy_name: str) -> Iterable[None]:
+    """Temporarily switch the global mixed precision policy."""
+
+    current_policy = mixed_precision.global_policy()
+    if current_policy.name != policy_name:
+        mixed_precision.set_global_policy(policy_name)
+    try:
+        yield
+    finally:
+        restored_policy = mixed_precision.global_policy()
+        if restored_policy.name != current_policy.name:
+            mixed_precision.set_global_policy(current_policy)
 
 
 @dataclass
@@ -71,6 +88,21 @@ class QuantizationPipeline:
 
         if cache_datasets:
             self._dataset_bundle = self._prepare_datasets(batch_size=default_batch_size)
+
+    def _clone_base_model(self, force_float32: bool = False) -> tf.keras.Model:
+        """Clone baseline model, optionally rebuilding under float32 policy."""
+
+        if not force_float32:
+            clone = tf.keras.models.clone_model(self.base_model)
+            clone.set_weights(self.base_model.get_weights())
+            return clone
+
+        with _temporary_precision_policy("float32"):
+            clone = tf.keras.models.clone_model(self.base_model)
+
+        weights = [np.asarray(weight).astype(np.float32) for weight in self.base_model.get_weights()]
+        clone.set_weights(weights)
+        return clone
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -386,7 +418,8 @@ class QuantizationPipeline:
             print("Step 1/3: Preparing representative dataset for calibration...")
             
             # Convert baseline model to TFLite with PTQ
-            converter = tf.lite.TFLiteConverter.from_keras_model(self.base_model)
+            conversion_model = self._clone_base_model(force_float32=True)
+            converter = tf.lite.TFLiteConverter.from_keras_model(conversion_model)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
             # Set representative dataset for full integer quantization
@@ -444,7 +477,8 @@ class QuantizationPipeline:
 
         try:
             # Convert baseline model to TFLite with dynamic range quantization
-            converter = tf.lite.TFLiteConverter.from_keras_model(self.base_model)
+            conversion_model = self._clone_base_model(force_float32=True)
+            converter = tf.lite.TFLiteConverter.from_keras_model(conversion_model)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
             # Note: No representative dataset needed for dynamic range
@@ -523,7 +557,11 @@ class QuantizationPipeline:
                 predicted_class = np.argmax(output_data, axis=1)[0]
 
                 # Check accuracy
-                true_class = y_batch.numpy()[0]
+                label_array = y_batch.numpy()
+                if label_array.ndim > 1 and label_array.shape[-1] > 1:
+                    true_class = int(np.argmax(label_array, axis=-1)[0])
+                else:
+                    true_class = int(label_array.flatten()[0])
                 if predicted_class == true_class:
                     correct += 1
                 total += 1
@@ -577,11 +615,10 @@ class QuantizationPipeline:
             # Import TensorFlow Model Optimization Toolkit
             import tensorflow_model_optimization as tfmot
 
-            # Apply QAT to the baseline model
+            # Apply QAT to a float32 clone of the baseline model
             quantize_model = tfmot.quantization.keras.quantize_model
-
-            # Create QAT model
-            qat_model = quantize_model(self.base_model)
+            float32_clone = self._clone_base_model(force_float32=True)
+            qat_model = quantize_model(float32_clone)
 
             # Compile QAT model with lower learning rate for fine-tuning
             qat_model.compile(
@@ -873,8 +910,7 @@ class QuantizationPipeline:
         bit_assignment: Optional[Dict[str, int]] = None,
         default_bits: int = 8,
     ) -> tf.keras.Model:
-        clone = tf.keras.models.clone_model(self.base_model)
-        clone.set_weights(self.base_model.get_weights())
+        clone = self._clone_base_model(force_float32=True)
 
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
@@ -893,8 +929,7 @@ class QuantizationPipeline:
         return clone
 
     def _binarize_model(self) -> tf.keras.Model:
-        clone = tf.keras.models.clone_model(self.base_model)
-        clone.set_weights(self.base_model.get_weights())
+        clone = self._clone_base_model(force_float32=True)
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
         metrics = []

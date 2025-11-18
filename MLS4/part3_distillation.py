@@ -7,11 +7,28 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import tf_compat  # noqa: F401  # align TensorFlow with tfmot expectations
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
 from baseline_model import prepare_compression_datasets
 
 
 AUTOTUNE = tf.data.AUTOTUNE
+
+
+class _precision_guard:
+    """Context manager that temporarily switches mixed precision policy."""
+
+    def __init__(self, policy_name: str) -> None:
+        self._target = policy_name
+        self._original = mixed_precision.global_policy()
+
+    def __enter__(self) -> None:
+        if mixed_precision.global_policy().name != self._target:
+            mixed_precision.set_global_policy(self._target)
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if mixed_precision.global_policy().name != self._original.name:
+            mixed_precision.set_global_policy(self._original)
 
 
 @dataclass
@@ -47,6 +64,7 @@ class SimpleDistiller(tf.keras.Model):
 
     def train_step(self, data):
         x, y = data
+        x = tf.cast(x, tf.float32)
         teacher_predictions = self.teacher(x, training=False)
         temperature = self.temperature
         alpha = self.alpha
@@ -75,6 +93,7 @@ class SimpleDistiller(tf.keras.Model):
 
     def test_step(self, data):
         x, y = data
+        x = tf.cast(x, tf.float32)
         predictions = self.student(x, training=False)
         student_loss = self.student_loss_fn(y, predictions)
         self.compiled_metrics.update_state(y, predictions)
@@ -102,7 +121,7 @@ class DistillationFramework:
         cache_datasets: bool = True,
         batch_size: int = 32,
     ) -> None:
-        self.teacher = teacher_model
+        self.teacher = self._clone_model_float32(teacher_model)
         self.student_arch = student_architecture
         self.distillation_results: Dict[str, Dict] = {}
         self.cache_datasets = cache_datasets
@@ -110,6 +129,32 @@ class DistillationFramework:
         self._dataset_bundle: Optional[DatasetBundle] = None
         if cache_datasets:
             self._dataset_bundle = self._prepare_datasets()
+
+    def _clone_model_float32(self, model: tf.keras.Model) -> tf.keras.Model:
+        """Clone a model under float32 policy to avoid dtype mismatches."""
+
+        with _precision_guard("float32"):
+            clone = tf.keras.models.clone_model(model)
+        weights = [np.asarray(weight).astype(np.float32) for weight in model.get_weights()]
+        clone.set_weights(weights)
+        if getattr(model, "optimizer", None):
+            try:
+                optimizer = tf.keras.optimizers.deserialize(
+                    tf.keras.optimizers.serialize(model.optimizer)
+                )
+            except Exception:
+                optimizer = tf.keras.optimizers.Adam()
+        else:
+            optimizer = tf.keras.optimizers.Adam()
+
+        loss = getattr(model, "loss", None)
+        if loss is None:
+            loss = tf.keras.losses.SparseCategoricalCrossentropy()
+        metrics = getattr(model, "metrics", None) or [
+            tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")
+        ]
+        clone.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+        return clone
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -501,6 +546,7 @@ class DistillationFramework:
                     return aug(img, training=True), label
 
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
+            ds = ds.map(lambda img, label: (tf.cast(img, tf.float32), label), num_parallel_calls=AUTOTUNE)
             return ds.batch(self.batch_size).prefetch(AUTOTUNE)
 
         return DatasetBundle(
@@ -522,7 +568,11 @@ class DistillationFramework:
         return self._dataset_bundle.test
 
     def _build_student(self, width_multiplier: float) -> tf.keras.Model:
-        student = self.student_arch(width_multiplier)
+        with _precision_guard("float32"):
+            student = self.student_arch(width_multiplier)
+        weights = [np.asarray(weight).astype(np.float32) for weight in student.get_weights()]
+        if weights:
+            student.set_weights(weights)
         return student
 
     def _analyze_soft_targets(self, temps: Sequence[float]) -> Dict[str, float]:
@@ -591,8 +641,7 @@ class DistillationFramework:
         return tf.add_n(losses) / max(1, len(losses))
 
     def _noisy_teacher_copy(self, scale: float) -> tf.keras.Model:
-        clone = tf.keras.models.clone_model(self.teacher)
-        clone.set_weights(self.teacher.get_weights())
+        clone = self._clone_model_float32(self.teacher)
         for layer in clone.layers:
             weights = layer.get_weights()
             if not weights:
