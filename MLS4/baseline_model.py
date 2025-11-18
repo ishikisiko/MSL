@@ -304,12 +304,54 @@ class LearningRateLogger(tf.keras.callbacks.Callback):
         return config
 
 
+@tf.keras.utils.register_keras_serializable(package="tf_keras.src.layers.core.tf_op_layer")
+class TFOpLambda(tf.keras.layers.Layer):
+    """Compatibility layer for TFOpLambda from tf_keras."""
+    
+    def __init__(self, function=None, **kwargs):
+        super().__init__(**kwargs)
+        self.function_name = function if isinstance(function, str) else None
+        
+    def call(self, inputs, **kwargs):
+        # For normalization multiply operation
+        if self.function_name == "math.multiply":
+            y = kwargs.get('y', 1.0)
+            return tf.math.multiply(inputs, y)
+        return inputs
+    
+    def get_config(self):
+        config = super().get_config()
+        config['function'] = self.function_name
+        return config
+
+
+class CompatibleBatchNormalization(tf.keras.layers.BatchNormalization):
+    """BatchNormalization that handles both list and int axis for tf_keras compatibility."""
+    
+    def __init__(self, axis=-1, **kwargs):
+        # Fix axis parameter: convert [3] to 3 for tf_keras compatibility
+        if isinstance(axis, list):
+            if len(axis) == 1:
+                axis = axis[0]
+            else:
+                # If multiple axes, keep as tuple (though rare for BN)
+                axis = tuple(axis)
+        super().__init__(axis=axis, **kwargs)
+
+
 CUSTOM_OBJECTS: Dict[str, Any] = {
     "AdaptiveCategoricalCrossentropy": AdaptiveCategoricalCrossentropy,
     "AdaptiveCategoricalAccuracy": AdaptiveCategoricalAccuracy,
     "AdaptiveTopKCategoricalAccuracy": AdaptiveTopKCategoricalAccuracy,
     "LearningRateLogger": LearningRateLogger,
+    "TFOpLambda": TFOpLambda,
+    "BatchNormalization": CompatibleBatchNormalization,
+    # Add compatibility mappings for tf_keras -> keras migration
+    "Functional": tf.keras.Model,
 }
+
+# Register custom objects for Keras serialization
+tf.keras.utils.get_custom_objects().update(CUSTOM_OBJECTS)
 
 
 @tf.keras.utils.register_keras_serializable(package="mls4")
@@ -832,44 +874,26 @@ def load_baseline_model(model_path: str = DEFAULT_MODEL_PATH) -> tf.keras.Model:
     
     print(f"Loading baseline model from: {model_path}")
     
-    # Try different loading strategies to handle tf_keras vs keras compatibility
+    # Load model with compile=False to avoid tf_keras compatibility issues
+    # Then recompile manually to ensure compatibility
     try:
-        # Strategy 1: Try loading with tf.keras (for models saved with tf_keras)
-        try:
-            import tf_keras
-            model = tf_keras.models.load_model(
-                model_path,
-                custom_objects=CUSTOM_OBJECTS,
-                compile=True
-            )
-            print(f"✓ Model loaded successfully with tf_keras: {model.name}")
-        except (ImportError, Exception) as e1:
-            # Strategy 2: Try standard keras loading
-            try:
-                model = tf.keras.models.load_model(
-                    model_path,
-                    custom_objects=CUSTOM_OBJECTS,
-                    compile=True
-                )
-                print(f"✓ Model loaded successfully with tf.keras: {model.name}")
-            except Exception as e2:
-                # Strategy 3: Load without compilation and recompile
-                print(f"  Warning: Standard loading failed, trying to load without compilation...")
-                model = tf.keras.models.load_model(
-                    model_path,
-                    custom_objects=CUSTOM_OBJECTS,
-                    compile=False
-                )
-                # Recompile with default settings
-                model.compile(
-                    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-                    loss=AdaptiveCategoricalCrossentropy(num_classes=100, label_smoothing=0.1),
-                    metrics=[
-                        AdaptiveCategoricalAccuracy(num_classes=100, name="accuracy"),
-                        AdaptiveTopKCategoricalAccuracy(num_classes=100, k=5, name="top5"),
-                    ]
-                )
-                print(f"✓ Model loaded and recompiled: {model.name}")
+        model = tf.keras.models.load_model(
+            model_path,
+            custom_objects=CUSTOM_OBJECTS,
+            compile=False
+        )
+        print(f"✓ Model structure loaded successfully: {model.name}")
+        
+        # Recompile with default settings
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+            loss=AdaptiveCategoricalCrossentropy(num_classes=100, label_smoothing=0.1),
+            metrics=[
+                AdaptiveCategoricalAccuracy(num_classes=100, name="accuracy"),
+                AdaptiveTopKCategoricalAccuracy(num_classes=100, k=5, name="top5"),
+            ]
+        )
+        print(f"✓ Model recompiled successfully")
         
         print(f"  Input shape: {model.input_shape}")
         print(f"  Output shape: {model.output_shape}")

@@ -42,7 +42,23 @@ class PruningComparator:
         base_model_path: str,
         cache_datasets: bool = True,
     ) -> None:
-        self.base_model = tf.keras.models.load_model(base_model_path, custom_objects=CUSTOM_OBJECTS)
+        # Load model with compile=False to avoid tf_keras compatibility issues
+        self.base_model = tf.keras.models.load_model(
+            base_model_path, 
+            custom_objects=CUSTOM_OBJECTS,
+            compile=False
+        )
+        # Recompile with a simple optimizer for consistency
+        from baseline_model import AdaptiveCategoricalCrossentropy, AdaptiveCategoricalAccuracy, AdaptiveTopKCategoricalAccuracy
+        self.base_model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+            loss=AdaptiveCategoricalCrossentropy(num_classes=100, label_smoothing=0.1),
+            metrics=[
+                AdaptiveCategoricalAccuracy(num_classes=100, name="accuracy"),
+                AdaptiveTopKCategoricalAccuracy(num_classes=100, k=5, name="top5"),
+            ]
+        )
+        
         self.pruning_results: Dict[str, Dict] = {}
         self._dataset_bundle: Optional[DatasetBundle] = None
         self._cached_batch_size: Optional[int] = None
