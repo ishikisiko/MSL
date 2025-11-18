@@ -18,6 +18,7 @@ def configure_efficientnet_gpu():
     # Disable layout optimization that causes issues with EfficientNet dropout layers
     os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
     os.environ['TF_DETERMINISTIC_OPS'] = '0'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '0'
     # Disable XLA JIT compilation to avoid layout errors
     os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
 
@@ -812,3 +813,72 @@ def _serialize_history(history: Dict[str, Any]) -> Dict[str, Any]:
     for key, values in history.items():
         serialized[key] = [float(v) for v in values]
     return serialized
+
+
+def load_baseline_model(model_path: str = DEFAULT_MODEL_PATH) -> tf.keras.Model:
+    """Load a trained baseline model from disk.
+    
+    Args:
+        model_path: Path to the saved model file (.keras format)
+        
+    Returns:
+        Loaded Keras model
+    """
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Model file not found: {model_path}\n"
+            f"Please train the baseline model first using: python baseline_model.py"
+        )
+    
+    print(f"Loading baseline model from: {model_path}")
+    
+    # Try different loading strategies to handle tf_keras vs keras compatibility
+    try:
+        # Strategy 1: Try loading with tf.keras (for models saved with tf_keras)
+        try:
+            import tf_keras
+            model = tf_keras.models.load_model(
+                model_path,
+                custom_objects=CUSTOM_OBJECTS,
+                compile=True
+            )
+            print(f"✓ Model loaded successfully with tf_keras: {model.name}")
+        except (ImportError, Exception) as e1:
+            # Strategy 2: Try standard keras loading
+            try:
+                model = tf.keras.models.load_model(
+                    model_path,
+                    custom_objects=CUSTOM_OBJECTS,
+                    compile=True
+                )
+                print(f"✓ Model loaded successfully with tf.keras: {model.name}")
+            except Exception as e2:
+                # Strategy 3: Load without compilation and recompile
+                print(f"  Warning: Standard loading failed, trying to load without compilation...")
+                model = tf.keras.models.load_model(
+                    model_path,
+                    custom_objects=CUSTOM_OBJECTS,
+                    compile=False
+                )
+                # Recompile with default settings
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
+                    loss=AdaptiveCategoricalCrossentropy(num_classes=100, label_smoothing=0.1),
+                    metrics=[
+                        AdaptiveCategoricalAccuracy(num_classes=100, name="accuracy"),
+                        AdaptiveTopKCategoricalAccuracy(num_classes=100, k=5, name="top5"),
+                    ]
+                )
+                print(f"✓ Model loaded and recompiled: {model.name}")
+        
+        print(f"  Input shape: {model.input_shape}")
+        print(f"  Output shape: {model.output_shape}")
+        return model
+        
+    except Exception as e:
+        print(f"✗ Failed to load model: {e}")
+        print(f"\nTroubleshooting:")
+        print(f"  1. Make sure tf_compat.py is imported before loading")
+        print(f"  2. Check if the model file is corrupted")
+        print(f"  3. Try recreating the model with create_baseline_model()")
+        raise

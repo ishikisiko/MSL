@@ -20,5 +20,6 @@ if os.environ.get(_FLAG_NAME) not in {"1", "true", "True"}:
 # Disable layout optimization that causes issues with EfficientNet dropout layers
 os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
 os.environ['TF_DETERMINISTIC_OPS'] = '0'
+os.environ['TF_CUDNN_DETERMINISTIC'] = '0'
 # Disable XLA JIT compilation to avoid layout errors
 os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'

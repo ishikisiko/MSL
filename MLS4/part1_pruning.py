@@ -155,7 +155,8 @@ class PruningComparator:
         # compilation before training. Reuse optimizer/loss/metrics from the
         # cloned (compiled) model but allow learning rate overrides.
         optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
-        self._safe_set_learning_rate(optimizer, learning_rate)
+        # Use lr_schedule (which may be a schedule or a float) to preserve warmup
+        self._safe_set_learning_rate(optimizer, lr_schedule)
 
         loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
 
@@ -210,7 +211,17 @@ class PruningComparator:
             callbacks=callbacks,
             verbose=2,
         )
+        
+        # Debug: Check actual pruning progress
+        pruned_weights = pruned_model.get_weights()
+        total_zeros = sum(np.sum(np.abs(w) < 1e-9) for w in pruned_weights)
+        total_params = sum(w.size for w in pruned_weights)
+        actual_sparsity_during_training = total_zeros / total_params if total_params > 0 else 0.0
+        print(f"训练后实际稀疏度 (带wrapper): {actual_sparsity_during_training:.2%}")
 
+        # Finalize pruning to ensure masks are applied correctly
+        tfmot.sparsity.keras.PruningSummaries(update_freq='epoch')(pruned_model)
+        
         stripped_model = self._strip_and_compile(pruned_model)
         final_accuracy = self._evaluate_accuracy(stripped_model, val_ds)
         layer_sparsity = self._compute_layer_sparsity(stripped_model)
@@ -309,10 +320,13 @@ class PruningComparator:
             )
 
             # Compile the pruned model
-            optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
             # Reduce learning rate in later stages
             stage_lr = learning_rate * (0.5 ** (stage_idx - 1))
-            self._safe_set_learning_rate(optimizer, stage_lr)
+            
+            # Create a fresh optimizer with the correct learning rate
+            optimizer_config = self._optimizer_config.copy()
+            optimizer_config['config']['learning_rate'] = float(stage_lr)
+            optimizer = tf.keras.optimizers.deserialize(optimizer_config)
 
             loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
 
@@ -327,6 +341,8 @@ class PruningComparator:
                         metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
 
             pruned_model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+            
+            print(f"阶段 {stage_idx} 学习率: {stage_lr:.2e}")
 
             # Prepare datasets
             train_ds = self._resolve_dataset(
@@ -370,12 +386,22 @@ class PruningComparator:
                 callbacks=callbacks,
                 verbose=2,
             )
+            
+            # Debug: Check actual pruning progress
+            pruned_weights = pruned_model.get_weights()
+            total_zeros = sum(np.sum(np.abs(w) < 1e-9) for w in pruned_weights)
+            total_params = sum(w.size for w in pruned_weights)
+            actual_sparsity_during_training = total_zeros / total_params if total_params > 0 else 0.0
+            print(f"训练后实际稀疏度 (带wrapper): {actual_sparsity_during_training:.2%}")
 
+            # Finalize pruning to ensure masks are applied correctly
+            tfmot.sparsity.keras.PruningSummaries(update_freq='epoch')(pruned_model)
+            
             # Strip pruning wrappers and evaluate
             stripped_model = self._strip_and_compile(pruned_model)
             final_accuracy = self._evaluate_accuracy(stripped_model, val_ds)
             layer_sparsity = self._compute_layer_sparsity(stripped_model)
-
+            
             stage_result = {
                 "stage": stage_idx,
                 "target_sparsity": stage_sparsity,
@@ -533,7 +559,7 @@ class PruningComparator:
                 )
                 print("成功物理移除 filters 并重建模型")
 
-                # Recompile after rebuilding
+                # Recompile after rebuilding with proper learning rate schedule
                 optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
                 self._safe_set_learning_rate(optimizer, lr_schedule)
                 loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
@@ -924,7 +950,8 @@ class PruningComparator:
         multiplier = sparsity_map.get(layer_type, 0.5)
         layer_sparsity = min(0.95, target_sparsity * multiplier)  # Cap at 95%
 
-        return layer_sparsity
+        # Convert to float32 to ensure type consistency
+        return float(np.float32(layer_sparsity))
 
     def _apply_pruning_wrappers(
         self,
@@ -946,12 +973,12 @@ class PruningComparator:
                     if layer_sparsity < 0.05:
                         return layer
 
-                    # Create layer-specific pruning schedule
+                    # Create layer-specific pruning schedule with float32 precision
                     if hasattr(pruning_schedule, 'final_sparsity'):
                         # Polynomial or gradual decay
                         layer_schedule = type(pruning_schedule)(
-                            initial_sparsity=pruning_schedule.initial_sparsity,
-                            final_sparsity=layer_sparsity,
+                            initial_sparsity=float(np.float32(pruning_schedule.initial_sparsity)),
+                            final_sparsity=float(np.float32(layer_sparsity)),
                             begin_step=pruning_schedule.begin_step,
                             end_step=pruning_schedule.end_step,
                             power=getattr(pruning_schedule, 'power', 3),
@@ -959,7 +986,7 @@ class PruningComparator:
                     else:
                         # Constant sparsity
                         layer_schedule = tfmot.sparsity.keras.ConstantSparsity(
-                            target_sparsity=layer_sparsity,
+                            target_sparsity=float(np.float32(layer_sparsity)),
                             begin_step=pruning_schedule.begin_step,
                             frequency=getattr(pruning_schedule, 'frequency', 100),
                         )
@@ -1005,11 +1032,30 @@ class PruningComparator:
                 return False
         return False
 
-    def _safe_set_learning_rate(self, optimizer, learning_rate: Optional[float]) -> None:
-        """Safely set learning rate, handling schedulers and non-settable cases."""
+    def _safe_set_learning_rate(
+        self, 
+        optimizer, 
+        learning_rate: Optional[Union[float, tf.keras.optimizers.schedules.LearningRateSchedule]]
+    ) -> None:
+        """Safely set learning rate, handling schedulers and non-settable cases.
+        
+        Args:
+            optimizer: The optimizer to modify
+            learning_rate: Either a float or a LearningRateSchedule object
+        """
         if learning_rate is None:
             return
         
+        # If learning_rate is already a schedule, set it directly
+        if isinstance(learning_rate, tf.keras.optimizers.schedules.LearningRateSchedule):
+            if hasattr(optimizer, 'learning_rate'):
+                try:
+                    optimizer.learning_rate = learning_rate
+                    return
+                except (TypeError, AttributeError):
+                    pass
+        
+        # Handle float learning rate
         # Check if optimizer uses a learning rate schedule
         if hasattr(optimizer, '_learning_rate') and hasattr(optimizer._learning_rate, '__call__'):
             # Recreate optimizer with float learning rate
@@ -1053,7 +1099,7 @@ class PruningComparator:
 
     def _clone_and_compile(
         self,
-        learning_rate: Optional[float] = None,
+        learning_rate: Optional[Union[float, tf.keras.optimizers.schedules.LearningRateSchedule]] = None,
     ) -> tf.keras.Model:
         model_clone = tf.keras.models.clone_model(self.base_model)
         model_clone.set_weights(self.base_model.get_weights())
@@ -1243,29 +1289,39 @@ class PruningComparator:
             else 100
         )
         begin_step = 0
-        end_step = steps_per_epoch * fine_tune_epochs
+        # Start pruning from first epoch (step 0) to ensure sufficient pruning duration
+        end_step = max(steps_per_epoch * fine_tune_epochs - steps_per_epoch // 2, steps_per_epoch)
 
+        # Force float32 precision for all sparsity values to avoid TF type errors
+        target_sparsity = float(np.float32(target_sparsity))
+        
+        print(f"剪枝调度: begin_step={begin_step}, end_step={end_step}, steps_per_epoch={steps_per_epoch}")
+        
         schedule_name = schedule_name.lower()
         if schedule_name == "polynomial":
             return tfmot.sparsity.keras.PolynomialDecay(
-                initial_sparsity=0.0,
+                initial_sparsity=float(np.float32(0.0)),
                 final_sparsity=target_sparsity,
                 begin_step=begin_step,
                 end_step=end_step,
+                power=3,  # Cubic decay for smoother transition
+                frequency=100,  # Update every 100 steps
             )
         if schedule_name == "gradual":
             return tfmot.sparsity.keras.PolynomialDecay(
-                initial_sparsity=0.0,
+                initial_sparsity=float(np.float32(0.0)),
                 final_sparsity=target_sparsity,
                 begin_step=begin_step,
                 end_step=end_step,
                 power=0.5,
+                frequency=100,
             )
         if schedule_name == "constant":
+            # For constant sparsity, start at target immediately but wait one epoch
             return tfmot.sparsity.keras.ConstantSparsity(
                 target_sparsity=target_sparsity,
-                begin_step=begin_step,
-                frequency=max(1, steps_per_epoch // 2),
+                begin_step=steps_per_epoch,  # Wait one epoch before pruning
+                frequency=100,
             )
         raise ValueError(f"Unsupported pruning schedule: {schedule_name}")
 

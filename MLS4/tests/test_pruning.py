@@ -32,4 +32,16 @@ def test_magnitude_based_pruning_compiles_and_runs(tmp_path):
 
     assert "model" in result
     assert isinstance(result["model"], tf.keras.Model)
+    # Confirm saving is optional but works when requested
+    save_path = tmp_path / "pruned_magnitude_test.keras"
+    pruner.magnitude_based_pruning(
+        target_sparsity=0.1,
+        fine_tune_epochs=1,
+        batch_size=16,
+        train_data=(x_train, y_train),
+        val_data=(x_val, y_val),
+        save_path=str(save_path),
+    )
+
+    assert save_path.exists()
     # Cleanup - tmp_path will be removed by pytest fixture

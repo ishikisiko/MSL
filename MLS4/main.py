@@ -108,6 +108,25 @@ def parse_args() -> argparse.Namespace:
         help="Directory to store JSON summaries.",
     )
     parser.add_argument(
+        "--pruned-output-dir",
+        default="results",
+        help="Directory to write pruned models (SavedModel/.keras) and TFLite artifacts.",
+    )
+    # Save pruned Keras models by default to make experiments reproducible.
+    # Use --no-save-pruned to disable saving.
+    parser.add_argument(
+        "--no-save-pruned",
+        action="store_false",
+        dest="save_pruned",
+        default=True,
+        help="Disable saving pruned Keras models to --pruned-output-dir.",
+    )
+    parser.add_argument(
+        "--save-pruned-tflite",
+        action="store_true",
+        help="Also save pruned models as TFLite to --pruned-output-dir when possible.",
+    )
+    parser.add_argument(
         "--skip-pruning",
         action="store_true",
         help="Skip pruning experiments.",
@@ -272,6 +291,10 @@ def main() -> None:
 
         # Magnitude-based pruning with layer-wise strategy and warmup
         print("\n>>> 运行改进的幅度剪枝 (Improved Magnitude Pruning) <<<")
+        # Build default save paths for pruned models (kept under results/ for consistency)
+        pruned_dir = Path(args.pruned_output_dir)
+        pruned_dir.mkdir(parents=True, exist_ok=True)
+
         magnitude = pruner.magnitude_based_pruning(
             target_sparsity=0.6,
             fine_tune_epochs=15,
@@ -279,6 +302,8 @@ def main() -> None:
             early_stopping_patience=8,
             use_layer_wise_sparsity=True,
             use_warmup=True,
+            save_path=str(pruned_dir / "pruned_magnitude.keras") if args.save_pruned else None,
+            save_tflite_path=(str(pruned_dir / "pruned_magnitude.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["magnitude"] = magnitude
         register_model("pruned_magnitude", magnitude["model"], "pruning_magnitude")
@@ -291,6 +316,8 @@ def main() -> None:
             epochs_per_stage=5,
             learning_rate=1e-3,
             use_layer_wise_sparsity=True,
+            save_path=str(pruned_dir / "pruned_gradual.keras") if args.save_pruned else None,
+            save_tflite_path=(str(pruned_dir / "pruned_gradual.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["gradual_magnitude"] = gradual
         register_model("pruned_gradual", gradual["model"], "pruning_gradual")
@@ -305,6 +332,8 @@ def main() -> None:
             early_stopping_patience=8,
             use_warmup=True,
             use_physical_removal=False,  # Keep false for stability
+            save_path=str(pruned_dir / "pruned_structured.keras") if args.save_pruned else None,
+            save_tflite_path=(str(pruned_dir / "pruned_structured.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["structured"] = structured
         register_model("pruned_structured", structured["model"], "pruning_structured")
