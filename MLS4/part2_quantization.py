@@ -382,12 +382,16 @@ class QuantizationPipeline:
                         yield [np.expand_dims(x_batch[i], axis=0).astype(np.float32)]
 
         try:
+            print("Starting TFLite Post-Training Quantization...")
+            print("Step 1/3: Preparing representative dataset for calibration...")
+            
             # Convert baseline model to TFLite with PTQ
             converter = tf.lite.TFLiteConverter.from_keras_model(self.base_model)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
 
             # Set representative dataset for full integer quantization
             converter.representative_dataset = representative_dataset
+            print("Step 2/3: Converting model with quantization (this may take several minutes)...")
 
             # Configure for target platform
             if target_platform == "edge_tpu":
@@ -409,6 +413,7 @@ class QuantizationPipeline:
 
             # Convert model
             quantized_tflite = converter.convert()
+            print(f"Step 3/3: Conversion complete! Model size: {len(quantized_tflite)/(1024*1024):.2f} MB")
 
             # Save TFLite model
             ptq_path = "models/ptq_quantized_model.tflite"
@@ -469,10 +474,29 @@ class QuantizationPipeline:
             return {"error": str(e)}
 
     def _evaluate_tflite_model(self, tflite_model: bytes) -> float:
-        """Evaluate TFLite model accuracy"""
+        """Evaluate TFLite model accuracy with GPU acceleration if available"""
         try:
-            # Create TFLite interpreter
-            interpreter = tf.lite.Interpreter(model_content=tflite_model)
+            # Create TFLite interpreter with GPU delegate support
+            interpreter = None
+            gpu_delegate = None
+            
+            # Try to use GPU delegate for faster inference
+            try:
+                # For macOS: Metal delegate
+                if hasattr(tf.lite.experimental, 'load_delegate'):
+                    gpu_delegate = tf.lite.experimental.load_delegate('libmetal_delegate.so')
+                    interpreter = tf.lite.Interpreter(
+                        model_content=tflite_model,
+                        experimental_delegates=[gpu_delegate]
+                    )
+                    print("TFLite: Using GPU delegate (Metal) for evaluation")
+            except Exception as e:
+                print(f"TFLite GPU delegate not available ({e}), using CPU")
+            
+            # Fallback to CPU interpreter
+            if interpreter is None:
+                interpreter = tf.lite.Interpreter(model_content=tflite_model)
+            
             interpreter.allocate_tensors()
 
             # Get input and output details
@@ -483,6 +507,8 @@ class QuantizationPipeline:
             val_ds = self._get_dataset("val", batch_size=1)
             correct = 0
             total = 0
+            
+            print("Evaluating TFLite model on 100 samples...")
 
             for x_batch, y_batch in val_ds.take(100):  # Test on 100 samples
                 # Set input tensor
@@ -501,8 +527,14 @@ class QuantizationPipeline:
                 if predicted_class == true_class:
                     correct += 1
                 total += 1
-
-            return correct / total if total > 0 else 0.0
+                
+                # Progress indicator every 25 samples
+                if total % 25 == 0:
+                    print(f"  Evaluated {total}/100 samples, accuracy so far: {correct/total:.4f}")
+            
+            final_accuracy = correct / total if total > 0 else 0.0
+            print(f"TFLite evaluation complete: {correct}/{total} correct, accuracy: {final_accuracy:.4f}")
+            return final_accuracy
 
         except Exception as e:
             print(f"TFLite model evaluation failed: {e}")
@@ -757,12 +789,15 @@ class QuantizationPipeline:
                     return aug(img, training=True), label
 
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
+            # Cache validation/test datasets for faster repeated access
+            if not augment:
+                ds = ds.cache()
             return ds.batch(batch_size).prefetch(AUTOTUNE)
 
         bundle = DatasetBundle(
             train=build_ds(x_train, y_train, augment=True),
-            val=build_ds(x_val, y_val),
-            test=build_ds(x_test, y_test),
+            val=build_ds(x_val, y_val),  # Cached for faster repeated evaluations
+            test=build_ds(x_test, y_test),  # Cached for faster repeated evaluations
             calibration=calibration,
             train_size=len(x_train),
             val_size=len(x_val),

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Dict, List
 
+import numpy as np
 import tf_compat  # noqa: F401  # ensure legacy tf.keras before TensorFlow import
 import tensorflow as tf
 
@@ -144,6 +145,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Skip distillation experiments.",
     )
+    parser.add_argument(
+        "--onlyp",
+        action="store_true",
+        help="Only run pruning experiments (skip quantization and distillation).",
+    )
+    parser.add_argument(
+        "--onlyq",
+        action="store_true",
+        help="Only run quantization experiments (skip pruning and distillation).",
+    )
+    parser.add_argument(
+        "--onlyd",
+        action="store_true",
+        help="Only run distillation experiments (skip pruning and quantization).",
+    )
     return parser.parse_args()
 
 
@@ -157,6 +173,30 @@ def to_dataset(x, y, batch_size):
 
 def main() -> None:
     args = parse_args()
+
+    # Validate mutually exclusive options
+    only_options = [args.onlyp, args.onlyq, args.onlyd]
+    if sum(only_options) > 1:
+        raise SystemExit(
+            "Error: --onlyp, --onlyq, and --onlyd are mutually exclusive. "
+            "Please specify only one."
+        )
+    
+    # Auto-configure skip flags based on --only* options
+    if args.onlyp:
+        args.skip_quantization = True
+        args.skip_distillation = True
+        print("Mode: Only Pruning (剪枝专用模式)")
+    elif args.onlyq:
+        args.skip_pruning = True
+        args.skip_distillation = True
+        print("Mode: Only Quantization (量化专用模式)")
+    elif args.onlyd:
+        args.skip_pruning = True
+        args.skip_quantization = True
+        print("Mode: Only Distillation (蒸馏专用模式)")
+    else:
+        print("Mode: Full Pipeline (完整流程)")
 
     # Set random seeds for reproducibility
     seed = args.seed
@@ -224,6 +264,10 @@ def main() -> None:
 
     pruning_artifacts: Dict[str, Dict] = {}
     if not args.skip_pruning:
+        print("\n" + "="*60)
+        print("开始剪枝阶段 (Starting Pruning Stage)")
+        print("="*60 + "\n")
+
         pruner = PruningComparator(base_model_path=str(baseline_path))
         magnitude = pruner.magnitude_based_pruning(target_sparsity=0.6)
         structured = pruner.structured_pruning(target_reduction=0.5)
@@ -231,6 +275,10 @@ def main() -> None:
         pruning_artifacts["structured"] = structured
         register_model("pruned_magnitude", magnitude["model"], "pruning_magnitude")
         register_model("pruned_structured", structured["model"], "pruning_structured")
+
+        print("\n" + "="*60)
+        print("剪枝阶段完成 (Pruning Stage Completed)")
+        print("="*60 + "\n")
 
     quantization_artifacts: Dict[str, Dict] = {}
     if not args.skip_quantization:

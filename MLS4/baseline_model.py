@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional, Tuple, Union
 import numpy as np
 import tf_compat  # noqa: F401  # keep tfmot compatible with newer TensorFlow builds
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 
 # Fix EfficientNet GPU layout optimization issues
 def configure_efficientnet_gpu():
@@ -24,7 +25,13 @@ def configure_efficientnet_gpu():
         try:
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
+            
+            # Enable mixed precision for 2-3x training speedup
+            policy = mixed_precision.Policy('mixed_float16')
+            mixed_precision.set_global_policy(policy)
+            
             print(f"Configured GPU memory growth for {len(gpus)} GPU(s)")
+            print(f"Enabled mixed precision training (policy: {policy.name})")
         except RuntimeError as e:
             print(f"GPU memory configuration failed: {e}")
     else:
@@ -765,13 +772,35 @@ def _recompute_batchnorm_statistics(
     dataset: tf.data.Dataset,
     max_batches: Optional[int] = None,
 ) -> None:
+    """Recompute BatchNorm statistics without dropout interference.
+    
+    This function temporarily disables dropout layers to prevent them from
+    corrupting BatchNorm statistics during the running mean/variance update.
+    """
     bn_layers = [layer for layer in model.layers if isinstance(layer, tf.keras.layers.BatchNormalization)]
     if not bn_layers:
         return
+    
+    # Save original dropout rates and disable dropout temporarily
+    dropout_configs = []
+    for layer in model.layers:
+        if isinstance(layer, tf.keras.layers.Dropout):
+            dropout_configs.append((layer, layer.rate))
+            layer.rate = 0.0
+    
+    print(f"Recomputing BatchNorm statistics (disabled {len(dropout_configs)} dropout layers)...")
+    
+    # Recompute BN statistics with dropout disabled
     for step, (images, _) in enumerate(dataset):
-        model(images, training=True)
+        model(images, training=True)  # GPU accelerated
         if max_batches is not None and step + 1 >= max_batches:
             break
+    
+    # Restore original dropout rates
+    for layer, original_rate in dropout_configs:
+        layer.rate = original_rate
+    
+    print(f"BatchNorm statistics updated using {step + 1} batches")
 
 
 def _serialize_history(history: Dict[str, Any]) -> Dict[str, Any]:

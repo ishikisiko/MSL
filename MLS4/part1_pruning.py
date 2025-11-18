@@ -103,8 +103,15 @@ class PruningComparator:
         batch_size: int = 128,
         learning_rate: float = 1e-4,
         early_stopping_patience: int = 3,
+        save_path: Optional[str] = None,
+        save_tflite_path: Optional[str] = None,
     ) -> Dict:
         """Perform magnitude-based pruning with configurable schedules."""
+
+        print(f"\n{'='*60}")
+        print(f"开始幅度剪枝 (Starting Magnitude-Based Pruning)")
+        print(f"目标稀疏度: {target_sparsity:.2%} | 剪枝计划: {pruning_schedule}")
+        print(f"{'='*60}\n")
 
         schedule = self._build_pruning_schedule(
             schedule_name=pruning_schedule,
@@ -187,6 +194,29 @@ class PruningComparator:
         }
 
         self.pruning_results["magnitude_based"] = results
+
+        # Optional: persist model to disk (SavedModel / HDF5)
+        if save_path:
+            try:
+                results["model"].save(save_path)
+            except Exception as exc:  # pragma: no cover - IO operations
+                print(f"Failed to save pruned model to {save_path}: {exc}")
+
+        # Optional: persist a TFLite representation of the pruned model
+        if save_tflite_path:
+            try:
+                converter = tf.lite.TFLiteConverter.from_keras_model(results["model"])
+                tflite_model = converter.convert()
+                with open(save_tflite_path, "wb") as f:
+                    f.write(tflite_model)
+            except Exception as exc:  # pragma: no cover - IO/conversion may fail locally
+                print(f"Failed to convert and save TFLite model to {save_tflite_path}: {exc}")
+
+        print(f"\n{'='*60}")
+        print(f"幅度剪枝完成 (Magnitude-Based Pruning Completed)")
+        print(f"最终准确率: {results['final_accuracy']:.4f} | 稀疏度: {results['sparsity_achieved']:.2%}")
+        print(f"{'='*60}\n")
+
         return results
 
     def structured_pruning(
@@ -198,8 +228,15 @@ class PruningComparator:
         batch_size: int = 32,
         train_data: Optional[DatasetLike] = None,
         val_data: Optional[DatasetLike] = None,
+        save_path: Optional[str] = None,
+        save_tflite_path: Optional[str] = None,
     ) -> Dict:
         """Apply coarse-grained filter/channel pruning."""
+
+        print(f"\n{'='*60}")
+        print(f"开始结构化剪枝 (Starting Structured Pruning)")
+        print(f"目标缩减比例: {target_reduction:.2%} | 重要性度量: {importance_metric}")
+        print(f"{'='*60}\n")
 
         model = self._clone_and_compile(learning_rate=learning_rate)
         conv_masks: Dict[str, np.ndarray] = {}
@@ -288,6 +325,29 @@ class PruningComparator:
             "training_history": history.history,
         }
         self.pruning_results["structured"] = results
+
+        # Optional: persist model to disk (SavedModel / HDF5)
+        if save_path:
+            try:
+                results["model"].save(save_path)
+            except Exception as exc:  # pragma: no cover - IO operations
+                print(f"Failed to save structured pruned model to {save_path}: {exc}")
+
+        # Optional: persist a TFLite representation of the pruned model
+        if save_tflite_path:
+            try:
+                converter = tf.lite.TFLiteConverter.from_keras_model(results["model"])
+                tflite_model = converter.convert()
+                with open(save_tflite_path, "wb") as f:
+                    f.write(tflite_model)
+            except Exception as exc:  # pragma: no cover - IO/conversion may fail locally
+                print(f"Failed to convert and save TFLite model to {save_tflite_path}: {exc}")
+
+        print(f"\n{'='*60}")
+        print(f"结构化剪枝完成 (Structured Pruning Completed)")
+        print(f"最终准确率: {results['final_accuracy']:.4f} | 模型大小缩减: {results['model_size_reduction']:.2%}")
+        print(f"{'='*60}\n")
+
         return results
 
     def gradual_vs_oneshot_pruning(
@@ -297,6 +357,11 @@ class PruningComparator:
         batch_size: int = 128,
     ) -> Dict:
         """Compare gradual polynomial pruning vs one-shot constant pruning."""
+
+        print(f"\n{'='*60}")
+        print(f"开始渐进式与一次性剪枝对比 (Starting Gradual vs One-shot Pruning Comparison)")
+        print(f"目标稀疏度: {target_sparsity:.2%}")
+        print(f"{'='*60}\n")
 
         gradual = self.magnitude_based_pruning(
             target_sparsity=target_sparsity,
@@ -330,6 +395,14 @@ class PruningComparator:
             "stability_metrics": stability,
         }
         self.pruning_results["gradual_vs_oneshot"] = comparison
+
+        print(f"\n{'='*60}")
+        print(f"渐进式与一次性剪枝对比完成 (Gradual vs One-shot Pruning Comparison Completed)")
+        print(f"渐进式准确率: {comparison['gradual_pruning']['final_accuracy']:.4f}")
+        print(f"一次性准确率: {comparison['oneshot_pruning']['final_accuracy']:.4f}")
+        print(f"准确率差异: {comparison['stability_metrics']['accuracy_delta']:.4f}")
+        print(f"{'='*60}\n")
+
         return comparison
 
     def analyze_pruning_sensitivity(
@@ -338,6 +411,11 @@ class PruningComparator:
         batch_size: int = 256,
     ) -> Dict[str, float]:
         """Individually prune each layer to measure accuracy drop."""
+
+        print(f"\n{'='*60}")
+        print(f"开始剪枝敏感性分析 (Starting Pruning Sensitivity Analysis)")
+        print(f"探查稀疏度: {probe_sparsity:.2%}")
+        print(f"{'='*60}\n")
 
         val_ds = self._resolve_dataset(
             dataset=None,

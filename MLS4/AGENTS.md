@@ -1,11 +1,10 @@
 # Repository Guidelines
-
+All code should follow the requirements in ASS4.md
 ## Project Structure & Module Organization
 The root contains targeted modules for each compression stage (`baseline_model.py`, `part1_pruning.py`, `part2_quantization.py`, `part3_distillation.py`, `part4_interaction_analysis.py`) plus shared utilities such as `compression_evaluator.py` and `visualization_tools.py`. Keep orchestration logic in `main.py` (create or extend as needed) so individual scripts remain single-purpose. Persist generated artifacts under `compressed_models/`, intermediate checkpoints under `checkpoints/`, and plots or tables in `visualizations/` or `reports/`.
 
 ## Build, Test, and Development Commands
-- `python -m venv venv && source venv/bin/activate`: isolate dependencies before editing.
-- `pip install -r requirements.txt`: install the exact versions expected by the grading harness.
+
 - `python main.py`: run the full CIFAR-100 pipeline (data prep → training → pruning/quantization/distillation → evaluation).
 - `python part1_pruning.py` / `python part2_quantization.py` / `python part3_distillation.py`: execute a single compression stage when iterating quickly.
 - `python visualization_tools.py --input results/metrics.csv`: regenerate plots after updating evaluations.
