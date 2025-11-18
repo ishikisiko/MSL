@@ -9,6 +9,12 @@ import numpy as np
 import tf_compat  # noqa: F401  # ensure legacy tf.keras before TensorFlow import
 import tensorflow as tf
 
+# CRITICAL: Force disable XLA JIT compilation immediately after TF import
+try:
+    tf.config.optimizer.set_jit(False)
+except Exception:
+    pass
+
 from application_scenarios import ApplicationScenarioAnalysis
 from baseline_model import (
     CALIBRATION_EXPORT_PATH,

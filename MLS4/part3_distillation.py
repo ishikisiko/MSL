@@ -9,6 +9,12 @@ import tf_compat  # noqa: F401  # align TensorFlow with tfmot expectations
 import tensorflow as tf
 from tensorflow.keras import mixed_precision
 
+# CRITICAL: Force disable XLA JIT compilation to avoid EfficientNet layout errors
+try:
+    tf.config.optimizer.set_jit(False)
+except Exception:
+    pass
+
 from baseline_model import prepare_compression_datasets
 
 
@@ -198,12 +204,15 @@ class DistillationFramework:
             # using the dataset directly and passing steps_per_epoch to
             # .fit avoids exhausting a finite iterator across epochs.
             epoch_train_ds = train_ds
+            
+            print(f"开始训练: temperature={temperature:.2f}, epochs={epochs}, steps_per_epoch={steps_per_epoch}")
+            
             history = distiller.fit(
                 epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
                 validation_data=val_ds.take(max(1, steps_per_epoch // 4)),
-                verbose=0,
+                verbose=2,  # Show progress bars
             )
             accuracy = float(
                 student.evaluate(val_ds, verbose=0)[1]

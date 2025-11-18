@@ -16,10 +16,30 @@ _FLAG_NAME: Final[str] = "TF_USE_LEGACY_KERAS"
 if os.environ.get(_FLAG_NAME) not in {"1", "true", "True"}:
     os.environ.setdefault(_FLAG_NAME, "1")
 
+# =====================================================================
+# CRITICAL: Completely disable XLA JIT compilation BEFORE TensorFlow import
+# This MUST be set before any TensorFlow imports to prevent XLA activation
+# =====================================================================
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0'
+os.environ['TF_DISABLE_XLA_JIT'] = '1'
+os.environ['TF_XLA_AUTO_JIT'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging noise
+
 # Fix EfficientNet GPU layout optimization issues
-# Disable layout optimization that causes issues with EfficientNet dropout layers
+# CRITICAL: Completely disable XLA JIT compilation
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0'
+os.environ['TF_DISABLE_XLA_JIT'] = '1'
+os.environ['TF_XLA_AUTO_JIT'] = '0'
+
+# Disable layout and graph optimizations that cause issues with EfficientNet
 os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
 os.environ['TF_DETERMINISTIC_OPS'] = '0'
 os.environ['TF_CUDNN_DETERMINISTIC'] = '0'
-# Disable XLA JIT compilation to avoid layout errors
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+
+# Disable function inlining and autograph to reduce retracing
+os.environ['TF_ENABLE_AUTOGRAPH'] = '0'
+os.environ['TF_ENABLE_FUNCTION_INLINING'] = '0'
+
+print("=" * 70)
+print("XLA JIT COMPILATION DISABLED - EfficientNet Compatibility Mode")
+print("=" * 70)

@@ -128,6 +128,7 @@ class CompressionInteractionAnalyzer:
                 teacher_model=best_pruned,
                 student_architecture=student_builder,
                 cache_datasets=False,
+                batch_size=64,  # Use smaller batch for combo experiments
             )
             dist_results = framework.temperature_optimization(num_trials=1, width_multiplier=0.5)
             student = dist_results["knowledge_transfer_metrics"][0]["student_model"]
@@ -144,6 +145,7 @@ class CompressionInteractionAnalyzer:
                 teacher_model=best_quantized,
                 student_architecture=student_builder,
                 cache_datasets=False,
+                batch_size=64,  # Use smaller batch for combo experiments
             )
             dist_results = framework.temperature_optimization(num_trials=1, width_multiplier=0.5)
             student = dist_results["knowledge_transfer_metrics"][0]["student_model"]
@@ -166,6 +168,7 @@ class CompressionInteractionAnalyzer:
                 teacher_model=combo_model,
                 student_architecture=student_builder,
                 cache_datasets=False,
+                batch_size=64,  # Use smaller batch for combo experiments
             )
             dist_results = framework.temperature_optimization(num_trials=1, width_multiplier=0.4)
             student = dist_results["knowledge_transfer_metrics"][0]["student_model"]
@@ -438,7 +441,8 @@ class CompressionInteractionAnalyzer:
         optimizer = self._build_optimizer()
         loss = self._build_loss()
         metrics = self._build_metrics()
-        model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+        # Disable JIT compilation to avoid XLA layout errors
+        model.compile(optimizer=optimizer, loss=loss, metrics=metrics, jit_compile=False)
         return model
 
     def _build_optimizer(self) -> tf.keras.optimizers.Optimizer:
