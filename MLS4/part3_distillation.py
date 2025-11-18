@@ -191,7 +191,7 @@ class DistillationFramework:
         temperature_range: Tuple[float, float] = (1.0, 20.0),
         num_trials: int = 5,
         width_multiplier: float = 0.5,
-        epochs: int = 2,
+        epochs: int = 8,
         steps_per_epoch: int = 50,
     ) -> Dict:
         """
@@ -257,7 +257,7 @@ class DistillationFramework:
         self,
         intermediate_sizes: Sequence[float] = (0.75, 0.5, 0.25),
         temperature: float = 5.0,
-        epochs: int = 2,
+        epochs: int = 8,
         steps_per_epoch: int = 40,
     ) -> Dict:
         """
@@ -340,7 +340,7 @@ class DistillationFramework:
         layer_names: Optional[Sequence[str]] = None,
         weight: float = 1.0,
         width_multiplier: float = 0.5,
-        epochs: int = 10,
+        epochs: int = 15,
         steps_per_epoch: int = 40,
     ) -> Dict:
         """
@@ -429,7 +429,7 @@ class DistillationFramework:
         self,
         layer_pairs: Optional[Sequence[Tuple[str, str]]] = None,
         width_multiplier: float = 0.5,
-        epochs: int = 2,
+        epochs: int = 10,
         steps_per_epoch: int = 30,
     ) -> Dict:
         """
@@ -501,7 +501,7 @@ class DistillationFramework:
         self,
         width_multiplier: float = 0.5,
         ensemble_size: int = 2,
-        epochs: int = 2,
+        epochs: int = 10,
         steps_per_epoch: int = 30,
     ) -> Dict:
         """
