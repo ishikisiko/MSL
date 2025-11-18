@@ -269,15 +269,51 @@ def main() -> None:
         print("="*60 + "\n")
 
         pruner = PruningComparator(base_model_path=str(baseline_path))
-        magnitude = pruner.magnitude_based_pruning(target_sparsity=0.6)
-        structured = pruner.structured_pruning(target_reduction=0.5)
+
+        # Magnitude-based pruning with layer-wise strategy and warmup
+        print("\n>>> 运行改进的幅度剪枝 (Improved Magnitude Pruning) <<<")
+        magnitude = pruner.magnitude_based_pruning(
+            target_sparsity=0.6,
+            fine_tune_epochs=15,
+            learning_rate=1e-3,
+            early_stopping_patience=8,
+            use_layer_wise_sparsity=True,
+            use_warmup=True,
+        )
         pruning_artifacts["magnitude"] = magnitude
-        pruning_artifacts["structured"] = structured
         register_model("pruned_magnitude", magnitude["model"], "pruning_magnitude")
+
+        # Gradual magnitude pruning (multi-stage approach)
+        print("\n>>> 运行渐进式剪枝 (Gradual Multi-Stage Pruning) <<<")
+        gradual = pruner.gradual_magnitude_pruning(
+            target_sparsity=0.6,
+            num_stages=3,
+            epochs_per_stage=5,
+            learning_rate=1e-3,
+            use_layer_wise_sparsity=True,
+        )
+        pruning_artifacts["gradual_magnitude"] = gradual
+        register_model("pruned_gradual", gradual["model"], "pruning_gradual")
+
+        # Structured pruning with improved training configuration
+        print("\n>>> 运行改进的结构化剪枝 (Improved Structured Pruning) <<<")
+        structured = pruner.structured_pruning(
+            target_reduction=0.5,
+            fine_tune_epochs=20,
+            learning_rate=1e-3,
+            batch_size=128,
+            early_stopping_patience=8,
+            use_warmup=True,
+            use_physical_removal=False,  # Keep false for stability
+        )
+        pruning_artifacts["structured"] = structured
         register_model("pruned_structured", structured["model"], "pruning_structured")
 
         print("\n" + "="*60)
         print("剪枝阶段完成 (Pruning Stage Completed)")
+        print(f"  幅度剪枝准确率: {magnitude['final_accuracy']:.4f} (稀疏度: {magnitude['sparsity_achieved']:.2%})")
+        print(f"  渐进式剪枝准确率: {gradual['final_accuracy']:.4f} (稀疏度: {gradual['sparsity_achieved']:.2%})")
+        print(f"  结构化剪枝准确率: {structured['final_accuracy']:.4f} (缩减: {structured['model_size_reduction']:.2%})")
         print("="*60 + "\n")
 
     quantization_artifacts: Dict[str, Dict] = {}

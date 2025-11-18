@@ -99,18 +99,21 @@ class PruningComparator:
         pruning_schedule: str = "polynomial",
         train_data: Optional[DatasetLike] = None,
         val_data: Optional[DatasetLike] = None,
-        fine_tune_epochs: int = 5,
+        fine_tune_epochs: int = 15,
         batch_size: int = 128,
-        learning_rate: float = 1e-4,
-        early_stopping_patience: int = 3,
+        learning_rate: float = 1e-3,
+        early_stopping_patience: int = 8,
         save_path: Optional[str] = None,
         save_tflite_path: Optional[str] = None,
+        use_layer_wise_sparsity: bool = True,
+        use_warmup: bool = True,
     ) -> Dict:
         """Perform magnitude-based pruning with configurable schedules."""
 
         print(f"\n{'='*60}")
         print(f"开始幅度剪枝 (Starting Magnitude-Based Pruning)")
         print(f"目标稀疏度: {target_sparsity:.2%} | 剪枝计划: {pruning_schedule}")
+        print(f"分层剪枝: {'启用' if use_layer_wise_sparsity else '禁用'} | Warmup: {'启用' if use_warmup else '禁用'}")
         print(f"{'='*60}\n")
 
         schedule = self._build_pruning_schedule(
@@ -121,10 +124,31 @@ class PruningComparator:
             train_size=self._resolve_dataset_size(train_data, default="train"),
         )
 
-        cloned_model = self._clone_and_compile(learning_rate=learning_rate)
+        # Use warmup learning rate schedule if enabled
+        if use_warmup:
+            train_size = self._resolve_dataset_size(train_data, default="train")
+            steps_per_epoch = math.ceil(train_size / batch_size) if train_size else 100
+            total_steps = steps_per_epoch * fine_tune_epochs
+            warmup_steps = max(int(total_steps * 0.2), steps_per_epoch)  # 20% warmup
+
+            # Import WarmupCosineDecay from baseline_model
+            from baseline_model import WarmupCosineDecay
+            lr_schedule = WarmupCosineDecay(
+                base_learning_rate=learning_rate,
+                total_steps=total_steps,
+                warmup_steps=warmup_steps,
+                min_lr_ratio=0.01,
+            )
+            print(f"使用 Warmup Cosine Decay: 基础LR={learning_rate:.2e}, Warmup步数={warmup_steps}, 总步数={total_steps}")
+        else:
+            lr_schedule = learning_rate
+
+        cloned_model = self._clone_and_compile(learning_rate=lr_schedule)
         pruned_model = self._apply_pruning_wrappers(
             cloned_model,
             pruning_schedule=schedule,
+            target_sparsity=target_sparsity,
+            use_layer_wise_sparsity=use_layer_wise_sparsity,
         )
 
         # The pruning wrapper returns a new model which requires explicit
@@ -166,6 +190,16 @@ class PruningComparator:
                 monitor="val_accuracy",
                 patience=early_stopping_patience,
                 restore_best_weights=True,
+                mode="max",
+                verbose=1,
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=0.5,
+                patience=max(2, early_stopping_patience // 3),
+                min_lr=1e-7,
+                mode="min",
+                verbose=1,
             ),
         ]
 
@@ -219,30 +253,236 @@ class PruningComparator:
 
         return results
 
+    def gradual_magnitude_pruning(
+        self,
+        target_sparsity: float = 0.7,
+        num_stages: int = 3,
+        pruning_schedule: str = "polynomial",
+        train_data: Optional[DatasetLike] = None,
+        val_data: Optional[DatasetLike] = None,
+        epochs_per_stage: int = 5,
+        batch_size: int = 128,
+        learning_rate: float = 1e-3,
+        early_stopping_patience: int = 5,
+        save_path: Optional[str] = None,
+        save_tflite_path: Optional[str] = None,
+        use_layer_wise_sparsity: bool = True,
+    ) -> Dict:
+        """Perform gradual multi-stage pruning to reach target sparsity progressively.
+
+        This approach is more stable than one-shot pruning, especially for high sparsity targets.
+        """
+
+        print(f"\n{'='*60}")
+        print(f"开始渐进式剪枝 (Starting Gradual Multi-Stage Pruning)")
+        print(f"目标稀疏度: {target_sparsity:.2%} | 阶段数: {num_stages}")
+        print(f"每阶段训练轮数: {epochs_per_stage}")
+        print(f"{'='*60}\n")
+
+        # Define sparsity levels for each stage
+        sparsity_stages = np.linspace(0, target_sparsity, num_stages + 1)[1:]  # Exclude 0
+        stage_results = []
+
+        # Start with the base model
+        current_model = self._clone_and_compile(learning_rate=learning_rate)
+
+        for stage_idx, stage_sparsity in enumerate(sparsity_stages, 1):
+            print(f"\n{'='*60}")
+            print(f"阶段 {stage_idx}/{num_stages}: 目标稀疏度 {stage_sparsity:.2%}")
+            print(f"{'='*60}\n")
+
+            # Build pruning schedule for this stage
+            schedule = self._build_pruning_schedule(
+                schedule_name=pruning_schedule,
+                target_sparsity=stage_sparsity,
+                fine_tune_epochs=epochs_per_stage,
+                batch_size=batch_size,
+                train_size=self._resolve_dataset_size(train_data, default="train"),
+            )
+
+            # Apply pruning wrappers
+            pruned_model = self._apply_pruning_wrappers(
+                current_model,
+                pruning_schedule=schedule,
+                target_sparsity=stage_sparsity,
+                use_layer_wise_sparsity=use_layer_wise_sparsity,
+            )
+
+            # Compile the pruned model
+            optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
+            # Reduce learning rate in later stages
+            stage_lr = learning_rate * (0.5 ** (stage_idx - 1))
+            self._safe_set_learning_rate(optimizer, stage_lr)
+
+            loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+
+            metrics = []
+            for metric_config in self._metric_configs:
+                if isinstance(metric_config, str):
+                    metrics.append(metric_config)
+                else:
+                    try:
+                        metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                    except Exception:
+                        metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+
+            pruned_model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
+            # Prepare datasets
+            train_ds = self._resolve_dataset(
+                dataset=train_data,
+                fallback_split="train",
+                batch_size=batch_size,
+                augment=True,
+                shuffle=True,
+            )
+            val_ds = self._resolve_dataset(
+                dataset=val_data,
+                fallback_split="val",
+                batch_size=batch_size,
+            )
+
+            # Callbacks for this stage
+            callbacks = [
+                tfmot.sparsity.keras.UpdatePruningStep(),
+                tf.keras.callbacks.EarlyStopping(
+                    monitor="val_accuracy",
+                    patience=early_stopping_patience,
+                    restore_best_weights=True,
+                    mode="max",
+                    verbose=1,
+                ),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor="val_loss",
+                    factor=0.5,
+                    patience=max(2, early_stopping_patience // 3),
+                    min_lr=1e-7,
+                    mode="min",
+                    verbose=1,
+                ),
+            ]
+
+            # Train for this stage
+            history = pruned_model.fit(
+                train_ds,
+                epochs=epochs_per_stage,
+                validation_data=val_ds,
+                callbacks=callbacks,
+                verbose=2,
+            )
+
+            # Strip pruning wrappers and evaluate
+            stripped_model = self._strip_and_compile(pruned_model)
+            final_accuracy = self._evaluate_accuracy(stripped_model, val_ds)
+            layer_sparsity = self._compute_layer_sparsity(stripped_model)
+
+            stage_result = {
+                "stage": stage_idx,
+                "target_sparsity": stage_sparsity,
+                "final_accuracy": final_accuracy,
+                "sparsity_achieved": np.mean(
+                    [layer["sparsity"] for layer in layer_sparsity.values()]
+                )
+                if layer_sparsity
+                else 0.0,
+                "layer_sparsity_analysis": layer_sparsity,
+                "training_history": history.history,
+            }
+            stage_results.append(stage_result)
+
+            print(f"\n阶段 {stage_idx} 完成: 准确率={final_accuracy:.4f}, 稀疏度={stage_result['sparsity_achieved']:.2%}\n")
+
+            # Update current model for next stage
+            current_model = stripped_model
+
+        # Final results
+        final_model = current_model
+        final_stage = stage_results[-1]
+
+        results = {
+            "model": final_model,
+            "final_accuracy": final_stage["final_accuracy"],
+            "sparsity_achieved": final_stage["sparsity_achieved"],
+            "layer_sparsity_analysis": final_stage["layer_sparsity_analysis"],
+            "stages": stage_results,
+            "num_stages": num_stages,
+        }
+
+        self.pruning_results["gradual_magnitude"] = results
+
+        # Optional: persist model to disk
+        if save_path:
+            try:
+                results["model"].save(save_path)
+            except Exception as exc:
+                print(f"Failed to save pruned model to {save_path}: {exc}")
+
+        # Optional: persist a TFLite representation
+        if save_tflite_path:
+            try:
+                converter = tf.lite.TFLiteConverter.from_keras_model(results["model"])
+                tflite_model = converter.convert()
+                with open(save_tflite_path, "wb") as f:
+                    f.write(tflite_model)
+            except Exception as exc:
+                print(f"Failed to convert and save TFLite model to {save_tflite_path}: {exc}")
+
+        print(f"\n{'='*60}")
+        print(f"渐进式剪枝完成 (Gradual Pruning Completed)")
+        print(f"最终准确率: {results['final_accuracy']:.4f} | 稀疏度: {results['sparsity_achieved']:.2%}")
+        print(f"{'='*60}\n")
+
+        return results
+
     def structured_pruning(
         self,
         target_reduction: float = 0.5,
         importance_metric: str = "l1_norm",
-        fine_tune_epochs: int = 10,
-        learning_rate: float = 5e-4,
-        batch_size: int = 32,
+        fine_tune_epochs: int = 20,
+        learning_rate: float = 1e-3,
+        batch_size: int = 128,
         train_data: Optional[DatasetLike] = None,
         val_data: Optional[DatasetLike] = None,
         save_path: Optional[str] = None,
         save_tflite_path: Optional[str] = None,
+        use_physical_removal: bool = False,  # Physical removal is experimental
+        early_stopping_patience: int = 8,
+        use_warmup: bool = True,
     ) -> Dict:
-        """Apply coarse-grained filter/channel pruning."""
+        """Apply coarse-grained filter/channel pruning with improved training."""
 
         print(f"\n{'='*60}")
         print(f"开始结构化剪枝 (Starting Structured Pruning)")
         print(f"目标缩减比例: {target_reduction:.2%} | 重要性度量: {importance_metric}")
+        print(f"物理移除: {'启用' if use_physical_removal else '禁用 (权重清零)'}")
         print(f"{'='*60}\n")
 
-        model = self._clone_and_compile(learning_rate=learning_rate)
+        # Start with cloned model
+        if use_warmup:
+            train_size = self._resolve_dataset_size(train_data, default="train")
+            steps_per_epoch = math.ceil(train_size / batch_size) if train_size else 100
+            total_steps = steps_per_epoch * fine_tune_epochs
+            warmup_steps = max(int(total_steps * 0.15), steps_per_epoch)  # 15% warmup
+
+            from baseline_model import WarmupCosineDecay
+            lr_schedule = WarmupCosineDecay(
+                base_learning_rate=learning_rate,
+                total_steps=total_steps,
+                warmup_steps=warmup_steps,
+                min_lr_ratio=0.01,
+            )
+            print(f"使用 Warmup Cosine Decay: 基础LR={learning_rate:.2e}, Warmup步数={warmup_steps}")
+        else:
+            lr_schedule = learning_rate
+
+        model = self._clone_and_compile(learning_rate=lr_schedule)
+
+        # Phase 1: Identify filters to remove based on importance
         conv_masks: Dict[str, np.ndarray] = {}
         filters_removed: Dict[str, List[int]] = {}
         architecture_changes: Dict[str, str] = {}
 
+        print("分析卷积层并计算 filter 重要性...")
         for layer in model.layers:
             if isinstance(layer, tf.keras.layers.Conv2D):
                 weights = layer.get_weights()
@@ -252,42 +492,101 @@ class PruningComparator:
                 kernel = weights[0]
                 bias = weights[1] if len(weights) > 1 else None
                 num_filters = kernel.shape[-1]
-                if num_filters <= 1:
+
+                # Skip layers with too few filters
+                if num_filters <= 2:
                     continue
+
+                # Calculate how many filters to remove
                 remove_count = int(num_filters * target_reduction)
-                remove_count = max(1, remove_count)
-                if remove_count >= num_filters:
-                    remove_count = num_filters - 1
+                remove_count = max(1, min(remove_count, num_filters - 1))
+
+                # Compute filter importance
                 importance = self._compute_filter_importance(
                     kernel,
                     metric=importance_metric,
                 )
+
+                # Select least important filters to remove
                 remove_indices = np.argsort(importance)[:remove_count]
                 mask = np.ones(num_filters, dtype=bool)
                 mask[remove_indices] = False
+
                 conv_masks[layer.name] = mask
                 filters_removed[layer.name] = remove_indices.tolist()
                 architecture_changes[layer.name] = (
-                    f"Zeroed {remove_count}/{num_filters} filters "
-                    f"({target_reduction:.2%} target)"
+                    f"{'移除' if use_physical_removal else '清零'} {remove_count}/{num_filters} filters "
+                    f"({remove_count/num_filters:.1%})"
                 )
 
-                kernel[..., ~mask] = 0.0
-                if bias is not None:
-                    bias[~mask] = 0.0
-                layer.set_weights([kernel, bias] if bias is not None else [kernel])
+                print(f"  {layer.name}: {architecture_changes[layer.name]}")
 
-            elif isinstance(layer, tf.keras.layers.BatchNormalization):
-                # Align BN parameters with preceding convolution mask.
-                prev_mask = conv_masks.get(self._find_previous_conv(layer, model))
-                if prev_mask is None:
-                    continue
-                gamma, beta, moving_mean, moving_var = layer.get_weights()
-                gamma[~prev_mask] = 0.0
-                beta[~prev_mask] = 0.0
-                moving_mean[~prev_mask] = 0.0
-                moving_var[~prev_mask] = 1.0
-                layer.set_weights([gamma, beta, moving_mean, moving_var])
+        # Phase 2: Apply pruning (either zero out or physically remove)
+        if use_physical_removal:
+            print("\n尝试物理移除 filters（实验性功能）...")
+            try:
+                dependency_analyzer = LayerDependencyAnalyzer(model)
+                model_rebuilder = ModelRebuilder(model)
+                model = model_rebuilder.rebuild_with_pruned_filters(
+                    filters_removed,
+                    dependency_analyzer
+                )
+                print("成功物理移除 filters 并重建模型")
+
+                # Recompile after rebuilding
+                optimizer = tf.keras.optimizers.deserialize(self._optimizer_config)
+                self._safe_set_learning_rate(optimizer, lr_schedule)
+                loss = tf.keras.losses.deserialize(self._loss_config, custom_objects=CUSTOM_OBJECTS)
+                metrics = []
+                for metric_config in self._metric_configs:
+                    if isinstance(metric_config, str):
+                        metrics.append(metric_config)
+                    else:
+                        try:
+                            metrics.append(tf.keras.metrics.deserialize(metric_config, custom_objects=CUSTOM_OBJECTS))
+                        except Exception:
+                            metrics.append(tf.keras.metrics.CategoricalAccuracy(name="accuracy"))
+                model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
+
+            except Exception as e:
+                print(f"物理移除失败，回退到权重清零方法: {e}")
+                use_physical_removal = False
+
+        if not use_physical_removal:
+            print("\n使用权重清零方法...")
+            # Zero out filters instead of physical removal
+            for layer in model.layers:
+                if layer.name in conv_masks:
+                    weights = layer.get_weights()
+                    if not weights:
+                        continue
+
+                    kernel = weights[0]
+                    bias = weights[1] if len(weights) > 1 else None
+                    mask = conv_masks[layer.name]
+
+                    # Zero out pruned filters
+                    kernel[..., ~mask] = 0.0
+                    if bias is not None:
+                        bias[~mask] = 0.0
+                    layer.set_weights([kernel, bias] if bias is not None else [kernel])
+
+                elif isinstance(layer, tf.keras.layers.BatchNormalization):
+                    # Align BN with preceding conv
+                    prev_mask = conv_masks.get(self._find_previous_conv(layer, model))
+                    if prev_mask is None:
+                        continue
+                    weights = layer.get_weights()
+                    if len(weights) >= 4:
+                        gamma, beta, moving_mean, moving_var = weights[:4]
+                        gamma[~prev_mask] = 0.0
+                        beta[~prev_mask] = 0.0
+                        moving_mean[~prev_mask] = 0.0
+                        moving_var[~prev_mask] = 1.0
+                        layer.set_weights([gamma, beta, moving_mean, moving_var] + weights[4:])
+
+        # Phase 3: Fine-tune the pruned model
+        print(f"\n开始 fine-tuning ({fine_tune_epochs} epochs)...")
 
         train_ds = self._resolve_dataset(
             dataset=train_data,
@@ -302,10 +601,29 @@ class PruningComparator:
             batch_size=batch_size,
         )
 
+        callbacks = [
+            tf.keras.callbacks.EarlyStopping(
+                monitor="val_accuracy",
+                patience=early_stopping_patience,
+                restore_best_weights=True,
+                mode="max",
+                verbose=1,
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor="val_loss",
+                factor=0.5,
+                patience=max(3, early_stopping_patience // 3),
+                min_lr=1e-7,
+                mode="min",
+                verbose=1,
+            ),
+        ]
+
         history = model.fit(
             train_ds,
             epochs=fine_tune_epochs,
             validation_data=val_ds,
+            callbacks=callbacks,
             verbose=2,
         )
 
@@ -323,24 +641,25 @@ class PruningComparator:
             "final_accuracy": final_accuracy,
             "model_size_reduction": size_reduction,
             "training_history": history.history,
+            "physical_removal_used": use_physical_removal,
         }
         self.pruning_results["structured"] = results
 
-        # Optional: persist model to disk (SavedModel / HDF5)
+        # Optional: persist model to disk
         if save_path:
             try:
                 results["model"].save(save_path)
-            except Exception as exc:  # pragma: no cover - IO operations
+            except Exception as exc:
                 print(f"Failed to save structured pruned model to {save_path}: {exc}")
 
-        # Optional: persist a TFLite representation of the pruned model
+        # Optional: persist a TFLite representation
         if save_tflite_path:
             try:
                 converter = tf.lite.TFLiteConverter.from_keras_model(results["model"])
                 tflite_model = converter.convert()
                 with open(save_tflite_path, "wb") as f:
                     f.write(tflite_model)
-            except Exception as exc:  # pragma: no cover - IO/conversion may fail locally
+            except Exception as exc:
                 print(f"Failed to convert and save TFLite model to {save_tflite_path}: {exc}")
 
         print(f"\n{'='*60}")
@@ -558,20 +877,102 @@ class PruningComparator:
     # ---------------------------------------------------------------------- #
     # Internal utilities
     # ---------------------------------------------------------------------- #
+    def _get_layer_type(self, layer: tf.keras.layers.Layer) -> str:
+        """Identify the type of layer for layer-wise pruning strategy."""
+        layer_name = layer.name.lower()
+
+        # EfficientNet specific layers to avoid pruning
+        if any(keyword in layer_name for keyword in ['stem', 'top', 'resize', 'input']):
+            return 'stem'
+
+        # SE (Squeeze-and-Excitation) blocks are very sensitive
+        if 'se_' in layer_name or 'squeeze' in layer_name or 'excite' in layer_name:
+            return 'se_block'
+
+        # Classification head
+        if 'classification' in layer_name or 'projection' in layer_name or layer_name.endswith('_head'):
+            return 'head'
+
+        # Layer type based on class
+        if isinstance(layer, tf.keras.layers.DepthwiseConv2D):
+            return 'depthwise_conv'
+        elif isinstance(layer, (tf.keras.layers.SeparableConv2D,)):
+            return 'separable_conv'
+        elif isinstance(layer, tf.keras.layers.Conv2D):
+            return 'conv2d'
+        elif isinstance(layer, tf.keras.layers.Dense):
+            return 'dense'
+
+        return 'other'
+
+    def _get_layer_wise_sparsity(self, layer: tf.keras.layers.Layer, target_sparsity: float) -> float:
+        """Get layer-specific sparsity based on layer type and sensitivity."""
+        layer_type = self._get_layer_type(layer)
+
+        # Define sparsity multipliers for different layer types
+        sparsity_map = {
+            'stem': 0.0,           # Don't prune stem layers
+            'se_block': 0.0,       # Don't prune SE blocks (very sensitive)
+            'head': 0.3,           # Light pruning for classification head
+            'depthwise_conv': 0.5, # Moderate pruning for depthwise conv
+            'separable_conv': 0.6, # Moderate-high pruning for separable conv
+            'conv2d': 0.8,         # Normal pruning for conv2d
+            'dense': 1.2,          # Aggressive pruning for dense layers (if not head)
+            'other': 0.5,          # Conservative for unknown layers
+        }
+
+        multiplier = sparsity_map.get(layer_type, 0.5)
+        layer_sparsity = min(0.95, target_sparsity * multiplier)  # Cap at 95%
+
+        return layer_sparsity
+
     def _apply_pruning_wrappers(
         self,
         model: tf.keras.Model,
         pruning_schedule,
+        target_sparsity: float = 0.7,
+        use_layer_wise_sparsity: bool = True,
     ) -> tf.keras.Model:
         """Clone `model` while wrapping supported layers with pruning."""
-        
+
         # No need to switch precision - baseline is already FP32
         def maybe_prune(layer: tf.keras.layers.Layer):
             if self._is_layer_prunable(layer):
-                return tfmot.sparsity.keras.prune_low_magnitude(
-                    layer,
-                    pruning_schedule=pruning_schedule,
-                )
+                # Use layer-wise sparsity if enabled
+                if use_layer_wise_sparsity:
+                    layer_sparsity = self._get_layer_wise_sparsity(layer, target_sparsity)
+
+                    # Skip pruning if sparsity is too low
+                    if layer_sparsity < 0.05:
+                        return layer
+
+                    # Create layer-specific pruning schedule
+                    if hasattr(pruning_schedule, 'final_sparsity'):
+                        # Polynomial or gradual decay
+                        layer_schedule = type(pruning_schedule)(
+                            initial_sparsity=pruning_schedule.initial_sparsity,
+                            final_sparsity=layer_sparsity,
+                            begin_step=pruning_schedule.begin_step,
+                            end_step=pruning_schedule.end_step,
+                            power=getattr(pruning_schedule, 'power', 3),
+                        )
+                    else:
+                        # Constant sparsity
+                        layer_schedule = tfmot.sparsity.keras.ConstantSparsity(
+                            target_sparsity=layer_sparsity,
+                            begin_step=pruning_schedule.begin_step,
+                            frequency=getattr(pruning_schedule, 'frequency', 100),
+                        )
+
+                    return tfmot.sparsity.keras.prune_low_magnitude(
+                        layer,
+                        pruning_schedule=layer_schedule,
+                    )
+                else:
+                    return tfmot.sparsity.keras.prune_low_magnitude(
+                        layer,
+                        pruning_schedule=pruning_schedule,
+                    )
             return layer
 
         # clone_model automatically copies the pretrained weights; avoid
@@ -580,7 +981,7 @@ class PruningComparator:
             model,
             clone_function=maybe_prune,
         )
-        
+
         return pruned_model
 
     def _is_layer_prunable(self, layer: tf.keras.layers.Layer) -> bool:

@@ -544,8 +544,11 @@ class DistillationFramework:
             _,
         ) = prepare_compression_datasets()
 
-        def build_ds(x, y, augment=False):
+        def build_ds(x, y, augment=False, is_training=False):
             ds = tf.data.Dataset.from_tensor_slices((x, y))
+            if is_training:
+                ds = ds.shuffle(10000)
+
             if augment:
                 aug = tf.keras.Sequential(
                     [
@@ -560,10 +563,17 @@ class DistillationFramework:
 
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
             ds = ds.map(lambda img, label: (tf.cast(img, tf.float32), label), num_parallel_calls=AUTOTUNE)
-            return ds.batch(self.batch_size).prefetch(AUTOTUNE)
+            
+            # Use drop_remainder=True to prevent XLA layout errors with dynamic shapes
+            ds = ds.batch(self.batch_size, drop_remainder=True)
+            
+            if is_training:
+                ds = ds.repeat()
+                
+            return ds.prefetch(AUTOTUNE)
 
         return DatasetBundle(
-            train=build_ds(x_train, y_train, augment=True),
+            train=build_ds(x_train, y_train, augment=True, is_training=True),
             val=build_ds(x_val, y_val),
             test=build_ds(x_test, y_test),
             train_size=len(x_train),
