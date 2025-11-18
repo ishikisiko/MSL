@@ -12,8 +12,23 @@ import tensorflow as tf
 # CRITICAL: Force disable XLA JIT compilation immediately after TF import
 try:
     tf.config.optimizer.set_jit(False)
-except Exception:
-    pass
+    # Disable ALL grappler optimizations to prevent XLA invocation
+    tf.config.optimizer.set_experimental_options({
+        'disable_meta_optimizer': True,
+        'disable_model_pruning': True,
+        'constant_folding': False,
+        'arithmetic_optimization': False,
+        'layout_optimizer': False,
+        'dependency_optimization': False,
+        'shape_optimization': False,
+        'remapping': False,
+        'scoped_allocator_optimization': False,
+        'implementation_selector': False,
+        'auto_mixed_precision': False,
+    })
+    print("✓ XLA JIT and ALL Grappler optimizations disabled")
+except Exception as e:
+    print(f"⚠ Warning: Could not disable optimizers: {e}")
 
 from application_scenarios import ApplicationScenarioAnalysis
 from baseline_model import (

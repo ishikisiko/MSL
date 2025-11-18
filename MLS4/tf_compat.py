@@ -8,6 +8,20 @@ from __future__ import annotations
 import os
 from typing import Final
 
+# =====================================================================
+# CRITICAL: Disable XLA FIRST before any other operations
+# Must be the VERY FIRST thing that happens in this module
+# =====================================================================
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0 --tf_xla_cpu_global_jit=false --tf_xla_clustering_debug=false'
+os.environ['TF_DISABLE_XLA_JIT'] = '1'
+os.environ['TF_XLA_AUTO_JIT'] = '0'
+os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir='  # Disable XLA GPU
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+# Disable all graph optimizations that might trigger XLA
+os.environ['TF_DISABLE_MKL'] = '1'
+os.environ['TF_ENABLE_AUTO_MIXED_PRECISION'] = '0'
+
 _FLAG_NAME: Final[str] = "TF_USE_LEGACY_KERAS"
 
 # TensorFlow Model Optimization currently depends on legacy tf.keras behavior.
@@ -16,13 +30,6 @@ _FLAG_NAME: Final[str] = "TF_USE_LEGACY_KERAS"
 if os.environ.get(_FLAG_NAME) not in {"1", "true", "True"}:
     os.environ.setdefault(_FLAG_NAME, "1")
 
-# =====================================================================
-# CRITICAL: Completely disable XLA JIT compilation BEFORE TensorFlow import
-# This MUST be set before any TensorFlow imports to prevent XLA activation
-# =====================================================================
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0'
-os.environ['TF_DISABLE_XLA_JIT'] = '1'
-os.environ['TF_XLA_AUTO_JIT'] = '0'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Reduce TF logging noise
 
 # Fix EfficientNet GPU layout optimization issues

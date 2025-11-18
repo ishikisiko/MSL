@@ -17,8 +17,10 @@ def configure_efficientnet_gpu():
     """Configure GPU settings to fix EfficientNet layout optimization errors"""
     # CRITICAL: Disable XLA JIT compilation completely to avoid layout errors
     # with EfficientNet's Dropout layers during distillation
-    os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0'
+    os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false --tf_xla_auto_jit=0 --tf_xla_cpu_global_jit=false'
     os.environ['TF_DISABLE_XLA_JIT'] = '1'
+    os.environ['TF_XLA_AUTO_JIT'] = '0'
+    os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir='
     
     # Disable layout and graph optimizations that cause issues
     os.environ['TF_ENABLE_LAYOUT_OPT'] = '0'
@@ -27,6 +29,9 @@ def configure_efficientnet_gpu():
     
     # Disable autograph to reduce retracing warnings
     os.environ['TF_ENABLE_AUTOGRAPH'] = '0'
+    
+    # Disable MKL and other optimizations that might trigger XLA
+    os.environ['TF_DISABLE_MKL'] = '1'
 
     # Configure GPU memory growth to prevent OOM errors
     gpus = tf.config.list_physical_devices('GPU')
@@ -38,6 +43,15 @@ def configure_efficientnet_gpu():
             # Disable JIT compilation at TF optimizer level
             tf.config.optimizer.set_jit(False)
             
+            # CRITICAL: Disable grappler optimizations that invoke XLA
+            tf.config.optimizer.set_experimental_options({
+                'disable_meta_optimizer': True,
+                'disable_model_pruning': True,
+                'constant_folding': False,
+                'arithmetic_optimization': False,
+                'layout_optimizer': False,
+            })
+            
             # Use FP32 for better compatibility with pruning/quantization/distillation
             # Mixed precision (FP16/BF16) causes conflicts with tfmot and TFLite conversion
             policy = mixed_precision.Policy('float32')
@@ -46,6 +60,7 @@ def configure_efficientnet_gpu():
             print(f"Configured GPU memory growth for {len(gpus)} GPU(s)")
             print(f"Using FP32 precision for compatibility (policy: {policy.name})")
             print(f"XLA JIT compilation DISABLED to avoid EfficientNet layout errors")
+            print(f"Grappler optimizer DISABLED to prevent XLA invocation")
             print(f"Note: FP32 ensures stability with pruning/quantization/distillation workflows")
         except RuntimeError as e:
             print(f"GPU memory configuration failed: {e}")

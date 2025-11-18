@@ -12,8 +12,23 @@ from tensorflow.keras import mixed_precision
 # CRITICAL: Force disable XLA JIT compilation to avoid EfficientNet layout errors
 try:
     tf.config.optimizer.set_jit(False)
-except Exception:
-    pass
+    # Disable grappler meta optimizer which can invoke XLA
+    tf.config.optimizer.set_experimental_options({
+        'disable_meta_optimizer': True,
+        'disable_model_pruning': True,
+        'constant_folding': False,
+        'arithmetic_optimization': False,
+        'layout_optimizer': False,
+        'dependency_optimization': False,
+        'shape_optimization': False,
+        'remapping': False,
+        'scoped_allocator_optimization': False,
+        'implementation_selector': False,
+        'auto_mixed_precision': False,
+    })
+    print("✓ XLA JIT and Grappler optimizer disabled successfully")
+except Exception as e:
+    print(f"⚠ Warning: Could not fully disable optimizers: {e}")
 
 from baseline_model import prepare_compression_datasets
 
