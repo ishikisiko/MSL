@@ -903,9 +903,9 @@ class QuantizationPipeline:
             train_ds_for_qat = train_dataset.map(_ensure_shape, num_parallel_calls=AUTOTUNE)
             val_ds_corrected = validation_dataset.map(_ensure_shape, num_parallel_calls=AUTOTUNE)
 
-            # FIX: Use repeat() to ensure enough data for all epochs
-            # The warning says we need steps_per_epoch * epochs batches
-            train_ds_for_qat = train_ds_for_qat.repeat(epochs)
+            # FIX: Use infinite repeat() to ensure enough data for all epochs
+            # This prevents "Your input ran out of data" warnings
+            train_ds_for_qat = train_ds_for_qat.repeat()  # Infinite repeat
 
             # Configure device policy to handle GPU determinism issues
             # FakeQuantWithMinMaxVarsGradient doesn't support determinism on GPU
@@ -965,9 +965,28 @@ class QuantizationPipeline:
             # For QAT, we can directly convert the QAT model to TFLite
             qat_model_for_conversion = qat_model
 
+            # Prepare representative dataset for QAT TFLite conversion
+            # Use calibration data from dataset bundle
+            if self._dataset_bundle:
+                calib_x, _ = self._dataset_bundle.calibration
+                calibration_samples = [calib_x[i] for i in range(min(100, len(calib_x)))]
+            else:
+                # Fallback: collect from validation dataset
+                calibration_samples = []
+                for x_batch, _ in validation_dataset.unbatch().take(100):
+                    calibration_samples.append(x_batch.numpy())
+            
+            def qat_representative_dataset():
+                """Representative dataset for QAT TFLite conversion"""
+                for sample in calibration_samples:
+                    yield [np.expand_dims(sample, axis=0).astype(np.float32)]
+
             # Convert to TFLite
             converter = tf.lite.TFLiteConverter.from_keras_model(qat_model_for_conversion)
             converter.optimizations = [tf.lite.Optimize.DEFAULT]
+            
+            # Add representative dataset for better quantization
+            converter.representative_dataset = qat_representative_dataset
 
             # Platform-specific configuration
             if target_platform == "edge_tpu":
@@ -981,10 +1000,12 @@ class QuantizationPipeline:
                 converter.inference_input_type = tf.int8
                 converter.inference_output_type = tf.int8
             else:
+                # Use float I/O for generic platform (compatible with dynamic range quantization)
                 converter.target_spec.supported_ops = [
-                    tf.lite.OpsSet.TFLITE_BUILTINS,
-                    tf.lite.OpsSet.TFLITE_BUILTINS_INT8
+                    tf.lite.OpsSet.TFLITE_BUILTINS
                 ]
+                converter.inference_input_type = tf.float32
+                converter.inference_output_type = tf.float32
 
             # Convert QAT model to TFLite
             qat_tflite = converter.convert()
@@ -1000,7 +1021,8 @@ class QuantizationPipeline:
             qat_model.save(qat_keras_path)
 
             # Evaluate QAT models
-            keras_accuracy = qat_model.evaluate(validation_dataset, verbose=0)[1]
+            # Use corrected validation dataset to avoid shape issues
+            keras_accuracy = qat_model.evaluate(val_ds_corrected.take(100), verbose=0)[1]
             tflite_accuracy = self._evaluate_tflite_model(qat_tflite)
 
             # Calculate model sizes and compression
@@ -1009,7 +1031,7 @@ class QuantizationPipeline:
             compression_ratio = self._calculate_tflite_compression_ratio(qat_tflite)
 
             # Compare with baseline
-            baseline_accuracy = self._baseline_accuracy(validation_dataset)
+            baseline_accuracy = self._baseline_accuracy(val_ds_corrected.take(100))
 
             return {
                 "qat_keras_model": qat_model,

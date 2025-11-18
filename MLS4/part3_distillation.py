@@ -192,8 +192,10 @@ class DistillationFramework:
                 optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
-            # Use proper dataset handling to avoid OUT_OF_RANGE errors
-            epoch_train_ds = train_ds.take(steps_per_epoch)
+            # The train dataset is already repeated in _prepare_datasets;
+            # using the dataset directly and passing steps_per_epoch to
+            # .fit avoids exhausting a finite iterator across epochs.
+            epoch_train_ds = train_ds
             history = distiller.fit(
                 epoch_train_ds,
                 epochs=epochs,
@@ -251,8 +253,10 @@ class DistillationFramework:
                 optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
-            # Use proper dataset handling to avoid OUT_OF_RANGE errors
-            epoch_train_ds = train_ds.take(steps_per_epoch)
+            # The train dataset is already repeated in _prepare_datasets;
+            # pass it directly so Keras pulls steps_per_epoch batches each
+            # epoch from the repeating dataset.
+            epoch_train_ds = train_ds
             history = distiller.fit(
                 epoch_train_ds,
                 epochs=epochs,
@@ -564,15 +568,18 @@ class DistillationFramework:
                 ds = ds.map(apply_aug, num_parallel_calls=AUTOTUNE)
             ds = ds.map(lambda img, label: (tf.cast(img, tf.float32), label), num_parallel_calls=AUTOTUNE)
             
-            # Use drop_remainder=True to prevent XLA layout errors with dynamic shapes
-            ds = ds.batch(self.batch_size, drop_remainder=True)
+            # Use drop_remainder only for training to prevent XLA layout
+            # errors when dynamic shapes are present. Validation and test sets
+            # should keep the final smaller batch so evaluation does not
+            # accidentally yield an empty dataset.
+            ds = ds.batch(self.batch_size, drop_remainder=is_training)
             
             if is_training:
                 ds = ds.repeat()
                 
             return ds.prefetch(AUTOTUNE)
 
-        return DatasetBundle(
+        bundle = DatasetBundle(
             train=build_ds(x_train, y_train, augment=True, is_training=True),
             val=build_ds(x_val, y_val),
             test=build_ds(x_test, y_test),
@@ -580,6 +587,23 @@ class DistillationFramework:
             val_size=len(x_val),
             test_size=len(x_test),
         )
+
+        # Validation/test may be smaller than the chosen batch size which
+        # would produce empty datasets if drop_remainder=True. We guard by
+        # warning the user and recommending a smaller batch size.
+        if bundle.val_size < self.batch_size:
+            print(
+                f"Warning: val dataset size ({bundle.val_size}) is smaller than "
+                f"distillation batch size ({self.batch_size}). This may result in "
+                "empty evaluation batches if drop_remainder=True."
+            )
+        if bundle.test_size < self.batch_size:
+            print(
+                f"Warning: test dataset size ({bundle.test_size}) is smaller than "
+                f"distillation batch size ({self.batch_size})."
+            )
+
+        return bundle
 
     def _get_dataset(self, split: str) -> tf.data.Dataset:
         if self._dataset_bundle is None:

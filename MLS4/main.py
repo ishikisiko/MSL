@@ -446,6 +446,7 @@ def main() -> None:
         framework = DistillationFramework(
             teacher_model=baseline_model,
             student_architecture=student_builder,
+            batch_size=args.distillation_batch_size,
         )
         temp_search = framework.temperature_optimization(num_trials=3)
         distillation_artifacts["temperature_search"] = temp_search
