@@ -78,36 +78,79 @@ def _plot_pareto_heatmap(results: List[Dict], path: Path) -> None:
 
 
 def _plot_training_convergence(results: List[Dict], path: Path) -> None:
-    histories = [
-        res.get("training_history")
-        for res in results
-        if isinstance(res.get("training_history"), dict)
-    ]
-    if not histories:
+    """Plot training convergence curves for models with training history."""
+    # Extract valid training histories with model names for legend
+    valid_histories = []
+    for res in results:
+        history = res.get("training_history")
+        if isinstance(history, dict) and "loss" in history:
+            valid_histories.append({
+                "history": history,
+                "name": res.get("model_name", "unknown"),
+                "technique": res.get("technique", "")
+            })
+    
+    if not valid_histories:
+        print("⚠ No training histories found for convergence plot")
         return
-    plt.figure(figsize=(6, 4))
-    for history in histories[:5]:
-        if "loss" in history:
-            plt.plot(history["loss"], alpha=0.7)
+    
+    plt.figure(figsize=(8, 5))
+    
+    # Plot up to 5 most interesting curves (prioritize different techniques)
+    plotted = 0
+    seen_techniques = set()
+    
+    for item in valid_histories:
+        if plotted >= 5:
+            break
+        
+        history = item["history"]
+        technique = item["technique"].split("_")[0]  # Get base technique
+        
+        # Prioritize diversity: one from each technique type
+        if technique not in seen_techniques or len(seen_techniques) >= 3:
+            plt.plot(history["loss"], alpha=0.7, label=item["name"][:20])
+            seen_techniques.add(technique)
+            plotted += 1
+    
     plt.xlabel("Epoch")
     plt.ylabel("Loss")
-    plt.title("Training Convergence (first 5 models)")
+    plt.title(f"Training Convergence ({plotted} models)")
     plt.grid(True, linestyle="--", alpha=0.3)
+    if plotted <= 5:
+        plt.legend(fontsize=8, loc="upper right")
     plt.tight_layout()
     plt.savefig(path, dpi=200)
     plt.close()
+    print(f"✓ Generated training convergence plot with {plotted} models")
 
 
 def _plot_interaction_matrix(results: List[Dict], path: Path) -> None:
+    """Plot technique interaction matrix showing combined compression effects."""
     techniques = ["pruning", "quantization", "distillation"]
     matrix = np.zeros((len(techniques), len(techniques)))
     baseline_accuracy = max(res.get("test_accuracy", 0.0) for res in results) or 1.0
+    
+    # Helper to classify technique type from technique string
+    def classify_technique(tech_str: str) -> set:
+        """Extract technique categories from technique string."""
+        categories = set()
+        if "pruning" in tech_str.lower():
+            categories.add("pruning")
+        if "quantization" in tech_str.lower() or "ptq" in tech_str.lower() or "qat" in tech_str.lower():
+            categories.add("quantization")
+        if "distillation" in tech_str.lower() or "distill" in tech_str.lower():
+            categories.add("distillation")
+        return categories
+    
     for i, ti in enumerate(techniques):
         for j, tj in enumerate(techniques):
+            # Find models that use both techniques (for diagonal, same technique)
             combined = [
                 res
                 for res in results
-                if ti in res.get("technique", "") and tj in res.get("technique", "")
+                if ti in classify_technique(res.get("technique", "")) 
+                and tj in classify_technique(res.get("technique", ""))
             ]
             if combined:
                 accuracy = np.mean([item.get("test_accuracy", 0.0) for item in combined])

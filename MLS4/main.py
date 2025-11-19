@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import tf_compat  # noqa: F401  # ensure legacy tf.keras before TensorFlow import
@@ -291,16 +291,31 @@ def main() -> None:
 
     evaluation_records: List[Dict] = []
 
-    def register_model(model_name: str, model: tf.keras.Model, technique: str) -> None:
+    def register_model(
+        model_name: str, 
+        model: tf.keras.Model, 
+        technique: str,
+        artifacts: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Register a model with comprehensive metrics including training history."""
         metrics = evaluator.benchmark_compressed_model(
             model=model,
             test_data=test_ds,
             model_name=model_name,
             technique=technique,
         )
+        # Merge training history and other artifacts if available
+        if artifacts:
+            if "training_history" in artifacts:
+                metrics["training_history"] = artifacts["training_history"]
+            # Also preserve other useful metadata
+            for key in ["sparsity_achieved", "model_size_reduction", "temperature", 
+                       "knowledge_transfer_metrics", "stage_results"]:
+                if key in artifacts:
+                    metrics[key] = artifacts[key]
         evaluation_records.append(metrics)
 
-    register_model("baseline", baseline_model, "baseline")
+    register_model("baseline", baseline_model, "baseline", artifacts=None)
 
     pruning_artifacts: Dict[str, Dict] = {}
     if not args.skip_pruning:
@@ -327,7 +342,7 @@ def main() -> None:
             save_tflite_path=(str(pruned_dir / "pruned_magnitude.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["magnitude"] = magnitude
-        register_model("pruned_magnitude", magnitude["model"], "pruning_magnitude")
+        register_model("pruned_magnitude", magnitude["model"], "pruning_magnitude", artifacts=magnitude)
 
         # Gradual magnitude pruning (multi-stage approach)
         print("\n>>> 运行渐进式剪枝 (Gradual Multi-Stage Pruning) <<<")
@@ -341,7 +356,7 @@ def main() -> None:
             save_tflite_path=(str(pruned_dir / "pruned_gradual.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["gradual_magnitude"] = gradual
-        register_model("pruned_gradual", gradual["model"], "pruning_gradual")
+        register_model("pruned_gradual", gradual["model"], "pruning_gradual", artifacts=gradual)
 
         # Structured pruning with improved training configuration
         print("\n>>> 运行改进的结构化剪枝 (Improved Structured Pruning) <<<")
@@ -357,7 +372,7 @@ def main() -> None:
             save_tflite_path=(str(pruned_dir / "pruned_structured.tflite") if args.save_pruned_tflite else None),
         )
         pruning_artifacts["structured"] = structured
-        register_model("pruned_structured", structured["model"], "pruning_structured")
+        register_model("pruned_structured", structured["model"], "pruning_structured", artifacts=structured)
 
         print("\n" + "="*60)
         print("剪枝阶段完成 (Pruning Stage Completed)")
@@ -377,6 +392,7 @@ def main() -> None:
             "mixed_bit",
             mixed["mixed_bit_models"]["adaptive_assignment"]["model"],
             "quantization_mixed",
+            artifacts=mixed["mixed_bit_models"]["adaptive_assignment"],
         )
 
         # 2. Legacy PTQ vs QAT comparison (kept for compatibility)
@@ -384,11 +400,11 @@ def main() -> None:
         for bits, payload in ptq_qat["ptq_results"].items():
             name = f"legacy_ptq_{bits}bit"
             quantization_artifacts[name] = payload
-            register_model(name, payload["model"], f"legacy_ptq_{bits}")
+            register_model(name, payload["model"], f"legacy_ptq_{bits}", artifacts=payload)
         for bits, payload in ptq_qat["qat_results"].items():
             name = f"legacy_qat_{bits}bit"
             quantization_artifacts[name] = payload
-            register_model(name, payload["model"], f"legacy_qat_{bits}")
+            register_model(name, payload["model"], f"legacy_qat_{bits}", artifacts=payload)
 
         # 3. NEW: Standard TFLite Post-Training Quantization (ASS.md requirement)
         ptq_results = {}
@@ -441,7 +457,7 @@ def main() -> None:
             if "tflite_accuracy" in qat_results:
                 quantization_artifacts["tflite_qat"] = qat_results
                 # Register the QAT Keras model for traditional evaluation
-                register_model("tflite_qat_keras", qat_results["qat_keras_model"], "tflite_qat")
+                register_model("tflite_qat_keras", qat_results["qat_keras_model"], "tflite_qat", artifacts=qat_results)
                 print(f"TFLite QAT Keras Accuracy: {qat_results['keras_accuracy']:.4f}")
                 print(f"TFLite QAT TFLite Accuracy: {qat_results['tflite_accuracy']:.4f}")
                 print(f"TFLite QAT Training Time: {qat_results['training_time_sec']:.1f}s")
@@ -474,7 +490,7 @@ def main() -> None:
         for key, payload in extreme.items():
             if isinstance(payload, dict) and "model" in payload:
                 quantization_artifacts[f"extreme_{key}"] = payload
-                register_model(f"extreme_{key}", payload["model"], f"extreme_{key}")
+                register_model(f"extreme_{key}", payload["model"], f"extreme_{key}", artifacts=payload)
 
         print("All quantization experiments completed successfully!")
 
@@ -505,6 +521,7 @@ def main() -> None:
             "distilled_temp",
             temp_search["best_model"],
             "distillation_temperature",
+            artifacts=temp_search,
         )
 
         print("\n>>> 运行渐进式蒸馏 (Progressive Distillation) <<<")
@@ -517,6 +534,7 @@ def main() -> None:
                 "distilled_progressive",
                 progressive["final_student"],
                 "distillation_progressive",
+                artifacts=progressive,
             )
 
         print("\n>>> 运行注意力迁移蒸馏 (Attention Transfer) <<<")
@@ -528,6 +546,7 @@ def main() -> None:
             "distilled_attention",
             attention["combined_distillation_results"]["model"],
             "distillation_attention",
+            artifacts=attention["combined_distillation_results"],
         )
 
         print("\n>>> 运行特征匹配蒸馏 (Feature Matching) <<<")
@@ -539,6 +558,7 @@ def main() -> None:
             "distilled_feature",
             feature["student_model"],
             "distillation_feature",
+            artifacts=feature,
         )
         
         print("\n" + "="*60)
