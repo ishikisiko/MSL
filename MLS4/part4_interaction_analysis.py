@@ -32,6 +32,12 @@ class CompressionInteractionAnalyzer:
     The analyzer consumes ready-made artifacts (models or dictionaries containing
     models) and composes them into new hybrids so we can reason about ordering,
     Pareto fronts, and failure modes.
+    
+    Note: Models are extracted from in-memory dictionaries passed from main.py,
+    not loaded from disk. These dictionaries are populated by:
+    - part1_pruning.py: saves to results/pruned_*.keras
+    - part2_quantization.py: saves to results/quantization/*.keras/*.tflite
+    - part3_distillation.py: saves to results/distillation/distilled_*.keras
     """
 
     def __init__(
@@ -321,6 +327,17 @@ class CompressionInteractionAnalyzer:
         return best_model
 
     def _extract_model(self, payload: Any) -> Optional[tf.keras.Model]:
+        """
+        Extract tf.keras.Model from various payload formats.
+        
+        The payload can be:
+        - A tf.keras.Model instance directly
+        - A dict with a 'model' key containing the tf.keras.Model
+        - None or other types (returns None)
+        
+        Models are provided by part1/2/3 via in-memory dictionaries,
+        not loaded from their saved file paths.
+        """
         if payload is None:
             return None
         if isinstance(payload, tf.keras.Model):

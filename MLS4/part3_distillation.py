@@ -70,7 +70,7 @@ class SimpleDistiller(tf.keras.Model):
         student: tf.keras.Model,
         teacher: tf.keras.Model,
         temperature: float = 5.0,
-        alpha: float = 0.1,
+        alpha: float = 0.5,  # 增加蒸馏权重从 0.1 到 0.5，平衡两个损失
     ) -> None:
         super().__init__()
         self.student = student
@@ -79,6 +79,7 @@ class SimpleDistiller(tf.keras.Model):
         self.alpha = alpha
         self.student_loss_fn = tf.keras.losses.SparseCategoricalCrossentropy()
         self.distillation_loss_fn = tf.keras.losses.KLDivergence()
+        self.l2_weight = 1e-4  # L2 正则化系数
 
     def compile(self, optimizer, metrics, **kwargs):
         # Disable XLA JIT compilation to avoid layout errors with EfficientNet Dropout layers
@@ -101,7 +102,14 @@ class SimpleDistiller(tf.keras.Model):
             distillation_loss = self.distillation_loss_fn(
                 teacher_soft, student_soft
             ) * (temperature**2)
-            loss = alpha * student_loss + (1 - alpha) * distillation_loss
+            
+            # 添加 L2 正则化
+            l2_loss = tf.add_n([
+                tf.nn.l2_loss(v) for v in self.student.trainable_variables
+                if 'kernel' in v.name
+            ]) * self.l2_weight
+            
+            loss = alpha * student_loss + (1 - alpha) * distillation_loss + l2_loss
 
         gradients = tape.gradient(loss, self.student.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.student.trainable_variables))
@@ -188,14 +196,18 @@ class DistillationFramework:
     # ------------------------------------------------------------------ #
     def temperature_optimization(
         self,
-        temperature_range: Tuple[float, float] = (1.0, 20.0),
-        num_trials: int = 5,
+        temperature_range: Tuple[float, float] = (3.0, 10.0),  # 缩小到有效范围
+        num_trials: int = 4,  # 减少试验次数提高效率
         width_multiplier: float = 0.5,
-        epochs: int = 8,
-        steps_per_epoch: int = 50,
+        epochs: int = 15,  # 增加训练轮次
+        steps_per_epoch: int = 100,  # 增加每轮步数以覆盖更多数据
+        save_path: Optional[str] = None,
     ) -> Dict:
         """
         Grid-search temperature for standard response-based distillation.
+        
+        Args:
+            save_path: Optional path to save the best distilled model (.keras)
         """
 
         # Remove .take().repeat() to fix OUT_OF_RANGE errors
@@ -211,17 +223,42 @@ class DistillationFramework:
             distiller = SimpleDistiller(
                 student=student, teacher=self.teacher, temperature=float(temperature)
             )
+            
+            # 使用学习率衰减
+            lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+                initial_learning_rate=1e-3,
+                decay_steps=epochs * steps_per_epoch,
+                alpha=0.1  # 最终学习率为初始的 10%
+            )
+            
             distiller.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
+                optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
             # The train dataset is already repeated in _prepare_datasets;
             # using the dataset directly and passing steps_per_epoch to
             # .fit avoids exhausting a finite iterator across epochs.
             epoch_train_ds = train_ds
-            val_steps = max(1, steps_per_epoch // 4)
+            val_steps = max(1, steps_per_epoch // 2)  # 增加验证步数
             
             print(f"开始训练: temperature={temperature:.2f}, epochs={epochs}, steps_per_epoch={steps_per_epoch}")
+            
+            # 添加早停和最佳模型保存
+            callbacks = [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor='val_accuracy',
+                    patience=5,
+                    restore_best_weights=True,
+                    verbose=1
+                ),
+                tf.keras.callbacks.ReduceLROnPlateau(
+                    monitor='val_accuracy',
+                    factor=0.5,
+                    patience=3,
+                    verbose=1,
+                    min_lr=1e-6
+                )
+            ]
             
             history = distiller.fit(
                 epoch_train_ds,
@@ -229,6 +266,7 @@ class DistillationFramework:
                 steps_per_epoch=steps_per_epoch,
                 validation_data=val_ds.repeat(),
                 validation_steps=val_steps,
+                callbacks=callbacks,
                 verbose=2,  # Show progress bars
             )
             accuracy = float(
@@ -252,18 +290,32 @@ class DistillationFramework:
             "knowledge_transfer_metrics": trials,
             "best_model": best_model,
         }
+        
+        # Save best model if path provided
+        if save_path and best_model is not None:
+            import os
+            os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+            best_model.save(save_path)
+            print(f"✓ Best distilled model (temp optimization) saved to {save_path}")
+            print(f"  Accuracy: {best_acc:.4f}, Optimal Temperature: {results['optimal_temperature']:.2f}")
+            results["saved_path"] = save_path
+        
         self.distillation_results["temperature_search"] = results
         return results
 
     def progressive_distillation(
         self,
-        intermediate_sizes: Sequence[float] = (0.75, 0.5, 0.25),
+        intermediate_sizes: Sequence[float] = (0.75, 0.5),  # 减少阶段数
         temperature: float = 5.0,
-        epochs: int = 8,
-        steps_per_epoch: int = 40,
+        epochs: int = 12,  # 增加训练轮次
+        steps_per_epoch: int = 100,  # 增加每轮步数
+        save_path: Optional[str] = None,
     ) -> Dict:
         """
         Chain teacher -> intermediate -> student distillation.
+        
+        Args:
+            save_path: Optional path to save the final student model (.keras)
         """
 
         # Remove .take().repeat() to fix OUT_OF_RANGE errors
@@ -272,27 +324,45 @@ class DistillationFramework:
 
         current_teacher = self.teacher
         stage_results = []
-        for ratio in intermediate_sizes:
+        for idx, ratio in enumerate(intermediate_sizes):
             student = self._build_student(ratio)
             distiller = SimpleDistiller(
                 student=student, teacher=current_teacher, temperature=temperature
             )
+            
+            lr_schedule = tf.keras.optimizers.schedules.CosineDecay(
+                initial_learning_rate=1e-3,
+                decay_steps=epochs * steps_per_epoch,
+                alpha=0.1
+            )
+            
             distiller.compile(
-                optimizer=tf.keras.optimizers.Adam(learning_rate=3e-4),
+                optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
                 metrics=[tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy")],
             )
             # The train dataset is already repeated in _prepare_datasets;
             # pass it directly so Keras pulls steps_per_epoch batches each
             # epoch from the repeating dataset.
             epoch_train_ds = train_ds
-            val_steps = max(1, steps_per_epoch // 4)
+            val_steps = max(1, steps_per_epoch // 2)
+            
+            callbacks = [
+                tf.keras.callbacks.EarlyStopping(
+                    monitor='val_accuracy',
+                    patience=4,
+                    restore_best_weights=True
+                )
+            ]
+            
+            print(f"\n渐进蒸馏阶段 {idx+1}/{len(intermediate_sizes)}: ratio={ratio}")
             history = distiller.fit(
                 epoch_train_ds,
                 epochs=epochs,
                 steps_per_epoch=steps_per_epoch,
                 validation_data=val_ds.repeat(),
                 validation_steps=val_steps,
-                verbose=0,
+                callbacks=callbacks,
+                verbose=1,
             )
             accuracy = float(student.evaluate(val_ds, verbose=0)[1])  # type: ignore[index]
             stage_results.append(
@@ -336,6 +406,17 @@ class DistillationFramework:
             ],
             "final_student": stage_results[-1]["student_model"],
         }
+        
+        # Save final student model if path provided
+        if save_path and stage_results and stage_results[-1]["student_model"] is not None:
+            import os
+            os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+            stage_results[-1]["student_model"].save(save_path)
+            print(f"✓ Progressive distilled model saved to {save_path}")
+            print(f"  Final Accuracy: {stage_results[-1]['accuracy']:.4f}")
+            print(f"  Stages: {len(stage_results)}, Ratios: {list(intermediate_sizes)}")
+            results["saved_path"] = save_path
+        
         self.distillation_results["progressive"] = results
         return results
 
@@ -346,9 +427,13 @@ class DistillationFramework:
         width_multiplier: float = 0.5,
         epochs: int = 15,
         steps_per_epoch: int = 40,
+        save_path: Optional[str] = None,
     ) -> Dict:
         """
         Transfer spatial attention maps alongside logits.
+        
+        Args:
+            save_path: Optional path to save the distilled model (.keras)
         """
 
         student = self._build_student(width_multiplier)
@@ -426,6 +511,16 @@ class DistillationFramework:
                 "final_accuracy": accuracy,
             },
         }
+        
+        # Save model if path provided
+        if save_path and student is not None:
+            import os
+            os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+            student.save(save_path)
+            print(f"✓ Attention transfer model saved to {save_path}")
+            print(f"  Accuracy: {accuracy:.4f}, Layers: {len(teacher_layers)}")
+            results["saved_path"] = save_path
+        
         self.distillation_results["attention_transfer"] = results
         return results
 
@@ -435,9 +530,13 @@ class DistillationFramework:
         width_multiplier: float = 0.5,
         epochs: int = 10,
         steps_per_epoch: int = 30,
+        save_path: Optional[str] = None,
     ) -> Dict:
         """
         Align intermediate representations between teacher and student.
+        
+        Args:
+            save_path: Optional path to save the distilled model (.keras)
         """
         
         with _precision_guard("float32"):
@@ -498,6 +597,16 @@ class DistillationFramework:
                 "student_model": student,
                 "accuracy": accuracy,
             }
+            
+            # Save model if path provided
+            if save_path and student is not None:
+                import os
+                os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+                student.save(save_path)
+                print(f"✓ Feature matching model saved to {save_path}")
+                print(f"  Accuracy: {accuracy:.4f}, Layer Pairs: {len(layer_pairs)}")
+                results["saved_path"] = save_path
+        
         self.distillation_results["feature_matching"] = results
         return results
 
@@ -507,9 +616,13 @@ class DistillationFramework:
         ensemble_size: int = 2,
         epochs: int = 10,
         steps_per_epoch: int = 30,
+        save_path: Optional[str] = None,
     ) -> Dict:
         """
         Distill from an ensemble of noisy teachers built from the baseline.
+        
+        Args:
+            save_path: Optional path to save the distilled model (.keras)
         """
         
         with _precision_guard("float32"):
@@ -561,6 +674,16 @@ class DistillationFramework:
                 "accuracy": accuracy,
                 "history": history,
             }
+            
+            # Save model if path provided
+            if save_path and student is not None:
+                import os
+                os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+                student.save(save_path)
+                print(f"✓ Self-distilled model saved to {save_path}")
+                print(f"  Accuracy: {accuracy:.4f}, Ensemble Size: {ensemble_size}")
+                results["saved_path"] = save_path
+        
         self.distillation_results["self_distillation"] = results
         return results
 
@@ -588,7 +711,9 @@ class DistillationFramework:
                     [
                         tf.keras.layers.RandomFlip("horizontal"),
                         tf.keras.layers.RandomTranslation(0.1, 0.1),
-                        tf.keras.layers.RandomRotation(0.05),
+                        tf.keras.layers.RandomRotation(0.1),  # 增加旋转角度
+                        tf.keras.layers.RandomZoom(0.1),  # 添加缩放
+                        tf.keras.layers.RandomContrast(0.2),  # 添加对比度调整
                     ]
                 )
 

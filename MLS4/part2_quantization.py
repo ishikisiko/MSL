@@ -359,6 +359,7 @@ class QuantizationPipeline:
         quantization_type: str = "post_training",
         representative_data: Optional[tf.data.Dataset] = None,
         target_platform: str = "generic",
+        output_dir: str = "results/quantization",
     ) -> Dict[str, Any]:
         """
         Implement standard TFLite quantization as required by ASS.md
@@ -367,19 +368,20 @@ class QuantizationPipeline:
             quantization_type: 'post_training', 'dynamic_range', 'full_integer'
             representative_data: Dataset for PTQ calibration
             target_platform: 'generic', 'edge_tpu', 'arm_cortex_m', 'mobile_gpu'
+            output_dir: Directory to save quantized models (default: results/quantization)
         """
         results = {}
 
         # 1. Post-training Quantization (PTQ) - ASS.md requirement
         if quantization_type in ["post_training", "full_integer"]:
             ptq_results = self._implement_post_training_quantization(
-                representative_data, target_platform
+                representative_data, target_platform, output_dir
             )
             results["post_training_quantization"] = ptq_results
 
         # 2. Dynamic Range Quantization - ASS.md requirement
         if quantization_type in ["dynamic_range"]:
-            dr_results = self._implement_dynamic_range_quantization()
+            dr_results = self._implement_dynamic_range_quantization(output_dir)
             results["dynamic_range_quantization"] = dr_results
 
         # 3. Full Integer Quantization - Enhanced PTQ
@@ -394,7 +396,8 @@ class QuantizationPipeline:
     def _implement_post_training_quantization(
         self,
         representative_data: Optional[tf.data.Dataset],
-        target_platform: str
+        target_platform: str,
+        output_dir: str = "results/quantization"
     ) -> Dict[str, Any]:
         """Implement standard TFLite post-training quantization with GPU acceleration"""
 
@@ -567,8 +570,8 @@ class QuantizationPipeline:
             print("="*60 + "\n")
 
             # Save TFLite model
-            ptq_path = "models/ptq_quantized_model.tflite"
-            os.makedirs("models", exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+            ptq_path = os.path.join(output_dir, "ptq_quantized_model.tflite")
             with open(ptq_path, 'wb') as f:
                 f.write(quantized_tflite)
 
@@ -611,7 +614,7 @@ class QuantizationPipeline:
             print(f"Post-training quantization failed: {e}")
             return {"error": str(e)}
 
-    def _implement_dynamic_range_quantization(self) -> Dict[str, Any]:
+    def _implement_dynamic_range_quantization(self, output_dir: str = "results/quantization") -> Dict[str, Any]:
         """Implement TFLite dynamic range quantization"""
 
         try:
@@ -624,8 +627,8 @@ class QuantizationPipeline:
             quantized_tflite = converter.convert()
 
             # Save TFLite model
-            dr_path = "models/dynamic_range_quantized_model.tflite"
-            os.makedirs("models", exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+            dr_path = os.path.join(output_dir, "dynamic_range_quantized_model.tflite")
             with open(dr_path, 'wb') as f:
                 f.write(quantized_tflite)
 
@@ -817,7 +820,8 @@ class QuantizationPipeline:
         epochs: int = 10,
         steps_per_epoch: int = 500,
         fine_tune_learning_rate: float = 1e-4,
-        target_platform: str = "generic"
+        target_platform: str = "generic",
+        output_dir: str = "results/quantization"
     ) -> Dict[str, Any]:
         """
         Implement standard Quantization-Aware Training using TF-MOT
@@ -829,6 +833,7 @@ class QuantizationPipeline:
             steps_per_epoch: Training steps per epoch
             fine_tune_learning_rate: Learning rate for QAT fine-tuning
             target_platform: Target deployment platform
+            output_dir: Directory to save QAT models (default: results/quantization)
         """
         try:
             # Import TensorFlow Model Optimization Toolkit
@@ -1011,13 +1016,13 @@ class QuantizationPipeline:
             qat_tflite = converter.convert()
 
             # Save QAT TFLite model
-            qat_path = "models/qat_quantized_model.tflite"
-            os.makedirs("models", exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+            qat_path = os.path.join(output_dir, "qat_quantized_model.tflite")
             with open(qat_path, 'wb') as f:
                 f.write(qat_tflite)
 
             # Save QAT Keras model
-            qat_keras_path = "models/qat_fine_tuned_model.keras"
+            qat_keras_path = os.path.join(output_dir, "qat_fine_tuned_model.keras")
             qat_model.save(qat_keras_path)
 
             # Evaluate QAT models
@@ -1064,7 +1069,8 @@ class QuantizationPipeline:
         train_dataset: tf.data.Dataset,
         validation_dataset: tf.data.Dataset,
         qat_epochs: int = 5,
-        target_platform: str = "generic"
+        target_platform: str = "generic",
+        output_dir: str = "results/quantization"
     ) -> Dict[str, Any]:
         """
         Comprehensive comparison between PTQ and QAT as required by ASS.md

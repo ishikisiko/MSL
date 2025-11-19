@@ -393,11 +393,16 @@ def main() -> None:
         # 3. NEW: Standard TFLite Post-Training Quantization (ASS.md requirement)
         ptq_results = {}
         if not args.skip_tflite_quantization:
+            # Create quantization output directory
+            quant_dir = Path(args.pruned_output_dir) / "quantization"
+            quant_dir.mkdir(parents=True, exist_ok=True)
+            
             print("Implementing standard TFLite Post-Training Quantization...")
             ptq_results = quant_pipeline.standard_tflite_quantization(
                 quantization_type="post_training",
                 representative_data=train_ds,
-                target_platform=args.tflite_platform
+                target_platform=args.tflite_platform,
+                output_dir=str(quant_dir)
             )
             if "post_training_quantization" in ptq_results and "accuracy" in ptq_results["post_training_quantization"]:
                 quantization_artifacts["tflite_ptq"] = ptq_results["post_training_quantization"]
@@ -406,10 +411,14 @@ def main() -> None:
 
         # 4. NEW: Standard TFLite Dynamic Range Quantization (ASS.md requirement)
         if not args.skip_tflite_quantization:
+            quant_dir = Path(args.pruned_output_dir) / "quantization"
+            quant_dir.mkdir(parents=True, exist_ok=True)
+            
             print("Implementing standard TFLite Dynamic Range Quantization...")
             dr_results = quant_pipeline.standard_tflite_quantization(
                 quantization_type="dynamic_range",
-                target_platform=args.tflite_platform
+                target_platform=args.tflite_platform,
+                output_dir=str(quant_dir)
             )
             if "dynamic_range_quantization" in dr_results and "accuracy" in dr_results["dynamic_range_quantization"]:
                 quantization_artifacts["tflite_dynamic_range"] = dr_results["dynamic_range_quantization"]
@@ -418,12 +427,16 @@ def main() -> None:
 
         # 5. NEW: Standard TFLite Quantization-Aware Training (ASS.md requirement)
         if not args.skip_tflite_quantization:
+            quant_dir = Path(args.pruned_output_dir) / "quantization"
+            quant_dir.mkdir(parents=True, exist_ok=True)
+            
             print("Implementing standard TFLite Quantization-Aware Training...")
             qat_results = quant_pipeline.implement_standard_qat(
                 train_dataset=train_ds,
                 validation_dataset=val_ds,
                 epochs=args.qat_epochs,
-                target_platform=args.tflite_platform
+                target_platform=args.tflite_platform,
+                output_dir=str(quant_dir)
             )
             if "tflite_accuracy" in qat_results:
                 quantization_artifacts["tflite_qat"] = qat_results
@@ -436,12 +449,16 @@ def main() -> None:
         # 6. NEW: PTQ vs QAT Comprehensive Comparison
         comparison_results = {}
         if not args.skip_tflite_quantization:
+            quant_dir = Path(args.pruned_output_dir) / "quantization"
+            quant_dir.mkdir(parents=True, exist_ok=True)
+            
             print("Running PTQ vs QAT comprehensive comparison...")
             comparison_results = quant_pipeline.compare_ptq_vs_qat(
                 train_dataset=train_ds,
                 validation_dataset=val_ds,
                 qat_epochs=max(1, args.qat_epochs - 2),  # Slightly shorter for comparison
-                target_platform=args.tflite_platform
+                target_platform=args.tflite_platform,
+                output_dir=str(quant_dir)
             )
             if "comparison" in comparison_results:
                 quantization_artifacts["ptq_vs_qat_comparison"] = comparison_results
@@ -463,13 +480,26 @@ def main() -> None:
 
     distillation_artifacts: Dict[str, Dict] = {}
     if not args.skip_distillation:
+        print("\n" + "="*60)
+        print("开始知识蒸馏阶段 (Starting Knowledge Distillation Stage)")
+        print("="*60 + "\n")
+        
+        # Create distillation output directory
+        distill_dir = Path(args.pruned_output_dir) / "distillation"
+        distill_dir.mkdir(parents=True, exist_ok=True)
+        
         student_builder = lambda width=0.5: create_baseline_model(width_multiplier=width, dropout_rate=0.3)
         framework = DistillationFramework(
             teacher_model=baseline_model,
             student_architecture=student_builder,
             batch_size=args.distillation_batch_size,
         )
-        temp_search = framework.temperature_optimization(num_trials=3)
+        
+        print("\n>>> 运行温度优化蒸馏 (Temperature Optimization) <<<")
+        temp_search = framework.temperature_optimization(
+            num_trials=3,
+            save_path=str(distill_dir / "distilled_temperature.keras") if args.save_pruned else None,
+        )
         distillation_artifacts["temperature_search"] = temp_search
         register_model(
             "distilled_temp",
@@ -477,7 +507,10 @@ def main() -> None:
             "distillation_temperature",
         )
 
-        progressive = framework.progressive_distillation()
+        print("\n>>> 运行渐进式蒸馏 (Progressive Distillation) <<<")
+        progressive = framework.progressive_distillation(
+            save_path=str(distill_dir / "distilled_progressive.keras") if args.save_pruned else None,
+        )
         if progressive.get("final_student") is not None:
             distillation_artifacts["progressive"] = progressive
             register_model(
@@ -486,7 +519,10 @@ def main() -> None:
                 "distillation_progressive",
             )
 
-        attention = framework.attention_transfer()
+        print("\n>>> 运行注意力迁移蒸馏 (Attention Transfer) <<<")
+        attention = framework.attention_transfer(
+            save_path=str(distill_dir / "distilled_attention.keras") if args.save_pruned else None,
+        )
         distillation_artifacts["attention"] = attention
         register_model(
             "distilled_attention",
@@ -494,13 +530,28 @@ def main() -> None:
             "distillation_attention",
         )
 
-        feature = framework.feature_matching_distillation()
+        print("\n>>> 运行特征匹配蒸馏 (Feature Matching) <<<")
+        feature = framework.feature_matching_distillation(
+            save_path=str(distill_dir / "distilled_feature.keras") if args.save_pruned else None,
+        )
         distillation_artifacts["feature"] = feature
         register_model(
             "distilled_feature",
             feature["student_model"],
             "distillation_feature",
         )
+        
+        print("\n" + "="*60)
+        print("知识蒸馏阶段完成 (Distillation Stage Completed)")
+        if temp_search.get("best_model"):
+            print(f"  温度优化准确率: {temp_search['knowledge_transfer_metrics'][0]['accuracy']:.4f}")
+        if progressive.get("final_student"):
+            print(f"  渐进式蒸馏准确率: {progressive['knowledge_preservation_analysis'][-1]['accuracy']:.4f}")
+        if attention.get("combined_distillation_results"):
+            print(f"  注意力迁移准确率: {attention['combined_distillation_results']['accuracy']:.4f}")
+        if feature.get("student_model"):
+            print(f"  特征匹配准确率: {feature['accuracy']:.4f}")
+        print("="*60 + "\n")
 
     analyzer = CompressionInteractionAnalyzer(baseline_model, test_ds)
     combinations = analyzer.comprehensive_compression_analysis(
